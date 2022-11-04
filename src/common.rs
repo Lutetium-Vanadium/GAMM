@@ -3,10 +3,16 @@ use num_traits::Zero;
 
 pub type Float = f32;
 
+// pub const DIM_M1: usize = 200;
+// pub const DIM_M2: usize = 100;
+// pub const DIM_D: usize = 1000;
+// pub const L: usize = 100;
+
 pub const DIM_M1: usize = 1000;
 pub const DIM_M2: usize = 1000;
 pub const DIM_D: usize = 10000;
 pub const L: usize = 400;
+
 pub const BETA: Float = 28.0;
 
 #[derive(Default)]

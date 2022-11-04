@@ -19,10 +19,13 @@ pub fn beta_coocurring_amm(
     //
     // The loop essentially inserts replaces zero columns with columns from x and y until there are
     // no zero columns left, so the first l columns can be copied beforehand
-    let mut bx: DMatrix<Float> = DMatrix::from(x.columns(0, l));
-    let mut by: DMatrix<Float> = DMatrix::from(y.columns(0, l));
+    let mut bx = DMatrix::from(x.columns(0, l));
+    let mut by = DMatrix::from(y.columns(0, l));
 
     let mut zeroed_cols = ZeroedColumns::new_no_zeroed(l);
+
+    let attenuate_vec =
+        na::DVector::from_iterator(l, (0..l).map(|i| attenuate(beta, i as Float, l as Float)));
 
     // First l columns have already been copied, so we start from i=l instead
     for i in l..d {
@@ -34,8 +37,6 @@ pub fn beta_coocurring_amm(
             let (mut qx, mut rx) = bx.qr().unpack();
             let (mut qy, mut ry) = by.qr().unpack();
 
-            // TODO check if in-place transpose is more efficient or maintaining few matrix buffers
-            // in which to transpose is more efficient
             ry.transpose_mut();
             rx *= ry;
 
@@ -47,7 +48,7 @@ pub fn beta_coocurring_amm(
             let mut u = u.expect("true passed to compute_u");
             let mut v_t = v_t.expect("true passed to compute_v");
 
-            parameterized_reduce_rank(&mut sv, l, beta);
+            parameterized_reduce_rank(&mut sv, &attenuate_vec);
 
             let mut v = {
                 v_t.transpose_mut();
@@ -56,7 +57,6 @@ pub fn beta_coocurring_amm(
 
             let check_no_zero_cols =
                 |m: &na::DMatrix<Float>| m.column_iter().all(|c| !c.iter().all(|x| x.is_zero()));
-
             // The following matrices are orthogonal, so they shouldn't have any zero columns
             // This fact is used to optimize zero column finding by keeping track of zero columns
             // using the svd
@@ -99,17 +99,12 @@ fn parameterized_reduce_rank(
         <Float as na::ComplexField>::RealField,
         na::DimMinimum<na::Dynamic, na::Dynamic>,
     >,
-    l: usize,
-    beta: Float,
+    attenuate_vec: &na::DVector<Float>,
 ) {
-    let delta = sv[l / 2];
+    let delta = sv[sv.shape().1 / 2];
 
-    // TODO: vectorize this?
-    for i in 0..l {
-        sv[i] = (sv[i] - delta * attenuate(beta, i as Float, l as Float))
-            .max(0.0)
-            .sqrt();
-    }
+    sv.axpy(-delta, attenuate_vec, 1.0);
+    sv.apply(|v| *v = v.max(0.0).sqrt());
 }
 
 fn attenuate(beta: Float, k: Float, l: Float) -> Float {
