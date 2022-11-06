@@ -3,15 +3,20 @@ use num_traits::Zero;
 
 pub type Float = f32;
 
-// pub const DIM_M1: usize = 200;
-// pub const DIM_M2: usize = 100;
-// pub const DIM_D: usize = 1000;
-// pub const L: usize = 100;
+// pub const DIM_M1: usize = 4;
+// pub const DIM_M2: usize = 4;
+// pub const DIM_D: usize = 10;
+// pub const L: usize = 4;
 
-pub const DIM_M1: usize = 1000;
-pub const DIM_M2: usize = 1000;
-pub const DIM_D: usize = 10000;
-pub const L: usize = 400;
+pub const DIM_M1: usize = 200;
+pub const DIM_M2: usize = 100;
+pub const DIM_D: usize = 1000;
+pub const L: usize = 100;
+
+// pub const DIM_M1: usize = 1000;
+// pub const DIM_M2: usize = 1000;
+// pub const DIM_D: usize = 10000;
+// pub const L: usize = 400;
 
 pub const BETA: Float = 28.0;
 
@@ -74,4 +79,28 @@ impl ZeroedColumns {
             );
         }
     }
+}
+
+#[inline(always)]
+pub fn qr(
+    mut q: na::DMatrix<Float>,
+    mut r: na::DMatrix<Float>,
+    r_transposed: bool,
+) -> (na::DMatrix<Float>, na::DMatrix<Float>) {
+    let (_n, m) = q.shape();
+    assert_eq!(r.shape(), (m, m));
+
+    for k in 0..m {
+        for i in 0..k {
+            let (mut q_k, q_i) = q.columns_range_pair_mut(k, i);
+            let r_i = if r_transposed { (k, i) } else { (i, k) };
+            r[r_i] = q_i.dot(&q_k);
+            q_k.axpy(-r[r_i], &q_i, 1.0)
+        }
+
+        r[(k, k)] = q.column(k).norm();
+        q.column_mut(k).unscale_mut(r[(k, k)]);
+    }
+
+    (q, r)
 }

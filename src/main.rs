@@ -16,13 +16,31 @@ fn main() {
     let t_amm = t_start.elapsed();
 
     let t_start = time::Instant::now();
-    let z = x * y.transpose();
-    let t_reg = t_start.elapsed();
+    let z_loops = {
+        let mut res: na::DMatrix<f32> = na::DMatrix::zeros(DIM_M1, DIM_M2);
+        for i in 0..DIM_M1 {
+            for j in 0..DIM_M2 {
+                res[(i, j)] = x
+                    .row(i)
+                    .iter()
+                    .zip(y.row(j).iter())
+                    .map(|(&x, &y)| x * y)
+                    .sum();
+            }
+        }
+        res
+    };
+    let t_loops = t_start.elapsed();
 
+    let t_start = time::Instant::now();
+    let z = x * y.transpose();
+    let t_lib = t_start.elapsed();
+
+    let e_1 = (z_loops - &z).apply_norm(&na::EuclideanNorm);
     let e = (z - z_amm).apply_norm(&na::EuclideanNorm);
 
     println!(
-        "B-Coocurring-AMM: Error {}; Time taken {:?}  (Regular {:?})",
-        e, t_amm, t_reg
+        "B-Coocurring-AMM: Error {}; Time taken {:?}  (Lib {:?} [Error: {}]; Loops {:?})",
+        e, t_amm, t_lib, e_1, t_loops,
     );
 }

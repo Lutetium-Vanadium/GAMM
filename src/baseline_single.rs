@@ -1,14 +1,14 @@
-use nalgebra::{self as na, DMatrix};
+use nalgebra as na;
 use num_traits::Zero;
 
-use crate::common::{Float, ZeroedColumns};
+use crate::common::{self, Float, ZeroedColumns};
 
 pub fn beta_coocurring_amm(
-    x: &DMatrix<Float>,
-    y: &DMatrix<Float>,
+    x: &na::DMatrix<Float>,
+    y: &na::DMatrix<Float>,
     beta: Float,
     l: usize,
-) -> DMatrix<Float> {
+) -> na::DMatrix<Float> {
     let (_, d1) = x.shape();
     let (_, d2) = y.shape();
     debug_assert_eq!(d1, d2);
@@ -19,13 +19,15 @@ pub fn beta_coocurring_amm(
     //
     // The loop essentially inserts replaces zero columns with columns from x and y until there are
     // no zero columns left, so the first l columns can be copied beforehand
-    let mut bx = DMatrix::from(x.columns(0, l));
-    let mut by = DMatrix::from(y.columns(0, l));
+    let mut bx = na::DMatrix::from(x.columns(0, l));
+    let mut by = na::DMatrix::from(y.columns(0, l));
 
     let mut zeroed_cols = ZeroedColumns::new_no_zeroed(l);
 
     let attenuate_vec =
         na::DVector::from_iterator(l, (0..l).map(|i| attenuate(beta, i as Float, l as Float)));
+
+    let mut ry_t = na::DMatrix::zeros(l, l);
 
     // First l columns have already been copied, so we start from i=l instead
     for i in l..d {
@@ -34,17 +36,27 @@ pub fn beta_coocurring_amm(
         // needed. Since we copy the first l rows beforehand, the space making must be done before
         // subsequent copies
         if zeroed_cols.nzeroed() == 0 {
-            let (mut qx, mut rx) = bx.qr().unpack();
-            let (mut qy, mut ry) = by.qr().unpack();
+            let mut rx = na::DMatrix::zeros(l, l);
 
-            ry.transpose_mut();
-            rx *= ry;
+            let qx = {
+                let res = common::qr(bx, rx, false);
+                rx = res.1;
+                res.0
+            };
+            let qy = {
+                let res = common::qr(by, ry_t, true);
+                ry_t = res.1;
+                res.0
+            };
+
+            rx *= &ry_t;
 
             let na::SVD {
                 u,
                 v_t,
                 singular_values: mut sv,
             } = rx.svd(true, true);
+
             let mut u = u.expect("true passed to compute_u");
             let mut v_t = v_t.expect("true passed to compute_v");
 
@@ -73,11 +85,8 @@ pub fn beta_coocurring_amm(
                 v.column_mut(i).scale_mut(sv[i]);
             }
 
-            qx *= u;
-            qy *= v;
-
-            bx = qx;
-            by = qy;
+            bx = qx * u;
+            by = qy * v;
         }
 
         // Just make sure that the zero column book-keeping is indeed valid
