@@ -104,3 +104,7 @@ pub fn qr(
 
     (q, r)
 }
+
+pub fn find_l2_norm(m: na::DMatrix<Float>) -> Float {
+    m.svd(false, false).singular_values[0]
+}
