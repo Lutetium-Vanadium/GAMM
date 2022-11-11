@@ -1,23 +1,11 @@
+use std::sync::atomic::{self, AtomicUsize};
+
 use nalgebra as na;
 use num_traits::Zero;
 
 pub type Float = f32;
 
-// pub const DIM_M1: usize = 4;
-// pub const DIM_M2: usize = 4;
-// pub const DIM_D: usize = 10;
-// pub const L: usize = 4;
-
-pub const DIM_M1: usize = 200;
-pub const DIM_M2: usize = 100;
-pub const DIM_D: usize = 1000;
-pub const L: usize = 100;
-
-// pub const DIM_M1: usize = 1000;
-// pub const DIM_M2: usize = 1000;
-// pub const DIM_D: usize = 10000;
-// pub const L: usize = 400;
-
+pub const L: usize = 400;
 pub const BETA: Float = 28.0;
 
 #[derive(Default)]
@@ -46,19 +34,34 @@ impl ZeroedColumns {
         }
     }
 
+    pub fn new_from_matrix<T: Zero, R: na::Dim, C: na::Dim, S: na::Storage<T, R, C>>(
+        matrix: &na::Matrix<T, R, C, S>,
+    ) -> Self {
+        let n = matrix.ncols();
+        let mut this = Self::new_no_zeroed(n);
+
+        for (i, c) in matrix.column_iter().enumerate() {
+            if c.iter().all(|x| x.is_zero()) {
+                this.set_zeroed(i);
+            }
+        }
+
+        this
+    }
+
     pub fn nzeroed(&self) -> usize {
         self.nzeroed
     }
 
     pub fn set_zeroed(&mut self, index: usize) {
-        debug_assert_eq!(self.next_zeroed[index], Self::NON_ZERO);
+        assert_eq!(self.next_zeroed[index], Self::NON_ZERO);
         self.next_zeroed[index] = self.head;
         self.head = index;
         self.nzeroed += 1;
     }
 
     pub fn get_next_zeroed(&mut self) -> usize {
-        debug_assert_ne!(self.nzeroed, 0);
+        assert_ne!(self.nzeroed, 0);
 
         let old_head = self.head;
         self.head = self.next_zeroed[self.head];
@@ -67,8 +70,11 @@ impl ZeroedColumns {
         old_head
     }
 
-    pub fn check_matching_zeroed(&self, m: &na::DMatrix<Float>) {
-        assert_eq!(m.shape().1, self.next_zeroed.len());
+    pub fn check_matching_zeroed<R: na::Dim, C: na::Dim, S>(&self, m: &na::Matrix<Float, R, C, S>)
+    where
+        S: na::Storage<Float, R, C>,
+    {
+        assert_eq!(m.ncols(), self.next_zeroed.len());
 
         for (i, c) in m.column_iter().enumerate() {
             assert_eq!(
@@ -82,11 +88,15 @@ impl ZeroedColumns {
 }
 
 #[inline(always)]
-pub fn qr(
-    mut q: na::DMatrix<Float>,
-    mut r: na::DMatrix<Float>,
+pub fn qr<R: na::Dim, C: na::Dim, SA, SB>(
+    mut q: na::Matrix<Float, R, C, SA>,
+    mut r: na::Matrix<Float, C, C, SB>,
     r_transposed: bool,
-) -> (na::DMatrix<Float>, na::DMatrix<Float>) {
+) -> (na::Matrix<Float, R, C, SA>, na::Matrix<Float, C, C, SB>)
+where
+    SA: na::Storage<Float, R, C> + na::RawStorageMut<Float, R, C>,
+    SB: na::Storage<Float, C, C> + na::RawStorageMut<Float, C, C>,
+{
     let (_n, m) = q.shape();
     assert_eq!(r.shape(), (m, m));
 
@@ -107,4 +117,32 @@ pub fn qr(
 
 pub fn find_l2_norm(m: na::DMatrix<Float>) -> Float {
     m.svd(false, false).singular_values[0]
+}
+
+static NTHREADS: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+pub fn hardware_concurrency() -> usize {
+    if let Some(n) = option_env!("NTHREADS")
+        .map(|s| s.parse::<usize>().ok())
+        .flatten()
+    {
+        return n;
+    }
+
+    let mut nthreads = NTHREADS.load(atomic::Ordering::Relaxed);
+
+    if nthreads == usize::MAX {
+        nthreads = std::env::var("NTHREADS")
+            .map(|s| s.parse::<usize>().ok())
+            .ok()
+            .flatten()
+            .or_else(|| {
+                std::thread::available_parallelism()
+                    .map(std::num::NonZeroUsize::get)
+                    .ok()
+            })
+            .unwrap_or(1);
+        NTHREADS.store(nthreads, atomic::Ordering::SeqCst);
+    }
+    nthreads
 }
