@@ -1,40 +1,24 @@
-#![allow(dead_code)]
-#![deny(unsafe_op_in_unsafe_fn)]
-
-mod baseline_single;
-mod basic_multi;
-mod common;
-
-use std::{
-    fs,
-    io::{self, Read},
-    path,
-    time::{self, Duration},
+use gamm::{
+    baseline_single, basic_multi,
+    common::{self, BETA, L},
 };
+use std::time::Duration;
 
 use nalgebra as na;
 
-use common::{BETA, L};
-
-fn measure_time<T>(f: impl FnOnce() -> T) -> (T, time::Duration) {
-    let start = time::Instant::now();
-    let res = f();
-    (res, start.elapsed())
-}
-
 fn main() {
-    let (x, y) = load_matrices().expect("Couldn't load matrices");
+    let (x, y) = gamm::load_matrices().expect("Couldn't load matrices");
 
     // println!("x: {}", x.fixed_slice::<2, 2>(0, 0));
     // println!("y: {}", y.fixed_slice::<2, 2>(0, 0));
     let measure_loop_mm = std::env::var("MEASURE_LOOP_MM").is_ok();
 
     let (z_amm_single, t_amm_single) =
-        measure_time(|| baseline_single::beta_coocurring_amm(&x, &y, BETA, L));
+        gamm::measure_time(|| baseline_single::beta_coocurring_amm(&x, &y, BETA, L));
     let (z_amm_multi, t_amm_multi) =
-        measure_time(|| basic_multi::beta_coocurring_amm(&x, &y, BETA, L));
+        gamm::measure_time(|| basic_multi::beta_coocurring_amm(&x, &y, BETA, L));
     let loops_res = measure_loop_mm.then(|| {
-        measure_time(|| {
+        gamm::measure_time(|| {
             let dim_m1 = x.nrows();
             let dim_m2 = y.nrows();
             let mut res: na::DMatrix<f32> = na::DMatrix::zeros(dim_m1, dim_m2);
@@ -51,7 +35,7 @@ fn main() {
             res
         })
     });
-    let (z_lib, t_lib) = measure_time(|| x * y.transpose());
+    let (z_lib, t_lib) = gamm::measure_time(|| x * y.transpose());
     let (z, t_loops) = loops_res.unwrap_or((z_lib, Duration::MAX));
 
     println!("z: {}", z.fixed_slice::<2, 2>(0, 0));
@@ -82,36 +66,4 @@ fn main() {
         e_btwn_amm,
         t_amm_single.as_secs_f64() / t_amm_multi.as_secs_f64()
     );
-}
-
-fn load_matrix(path: &path::Path) -> io::Result<na::DMatrix<common::Float>> {
-    let mut r = io::BufReader::new(fs::File::open(path)?);
-    let mut buf = [0u8; 8];
-    let n = {
-        r.read_exact(&mut buf)?;
-        u64::from_le_bytes(buf) as usize
-    };
-    let m = {
-        r.read_exact(&mut buf)?;
-        u64::from_le_bytes(buf) as usize
-    };
-
-    let mut mat = na::DMatrix::zeros(n, m);
-
-    for i in 0..n {
-        for j in 0..m {
-            let mut buf = [0u8; std::mem::size_of::<common::Float>()];
-            r.read_exact(&mut buf)?;
-            mat[(i, j)] = common::Float::from_ne_bytes(buf);
-        }
-    }
-
-    Ok(mat)
-}
-
-fn load_matrices() -> io::Result<(na::DMatrix<common::Float>, na::DMatrix<common::Float>)> {
-    Ok((
-        load_matrix(path::Path::new("./baseline/x.dat"))?,
-        load_matrix(path::Path::new("./baseline/y.dat"))?,
-    ))
 }
