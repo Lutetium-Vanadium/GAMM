@@ -95,6 +95,11 @@ fn thread_task(
 
     let (ref mut bx, ref mut by) = *own_matrices;
 
+    // Make sure every thread gets first access to its assigned matrices. If the thread execution
+    // was very imbalanced, it could be that a thread completes its first run and then takes the
+    // `Mutex` if this thread which would be erroneous.
+    barrier.wait();
+
     // Start by inserting first l columns.
     //
     // The loop essentially inserts replaces zero columns with columns from x and y until there are
@@ -103,10 +108,9 @@ fn thread_task(
     by.copy_from(&y.columns(0, l));
 
     for i in 0..nruns {
-        barrier.wait();
         let other_matrices = (i > 0).then(|| {
             matrices[thread_id + 2usize.pow(i - 1)]
-                .try_lock()
+                .lock()
                 .expect("couldn't lock other thread's matrix")
         });
 
@@ -124,15 +128,8 @@ fn thread_task(
             by.columns_mut(0, l),
         );
     }
-    drop(own_matrices);
 
-    // FIXME: this is less than desirable
-    //
-    // The barrier requires that all nthreads reach the wait, however some threads have less
-    // iterations and will close earlier ending in threads with more iterations hanging
-    for _ in nruns..(nthreads as u32) {
-        barrier.wait();
-    }
+    drop(own_matrices);
 }
 
 /// First `l` columns must already be inserted into `bx` and `by`. `x` and `y` should not include
@@ -242,6 +239,7 @@ fn parameterized_reduce_rank(
     let delta = sv[sv.shape().1 / 2];
 
     sv.axpy(-delta, &attenuate_vec, 1.0);
+    // TODO vectorize this?
     sv.apply(|v| *v = v.max(0.0).sqrt());
 }
 
