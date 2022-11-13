@@ -2,6 +2,7 @@
 name = "gamm"
 version = "0.1.0"
 edition = "2021"
+default-run = "gamm"
 
 [dependencies]
 nalgebra = { version="0.31.3", features = ["rand"] }
