@@ -1,22 +1,21 @@
-use gamm::{
-    baseline_single, basic_multi,
-    common::{self, BETA, L},
-};
+use gamm::{baseline_single, basic_multi, common};
 use std::time::Duration;
 
 use nalgebra as na;
 
 fn main() {
-    let (x, y) = gamm::load_matrices().expect("Couldn't load matrices");
+    let config = gamm::get_config();
+
+    let (x, y) = gamm::load_matrices(&config).expect("Couldn't load matrices");
 
     // println!("x: {}", x.fixed_slice::<2, 2>(0, 0));
     // println!("y: {}", y.fixed_slice::<2, 2>(0, 0));
     let measure_loop_mm = std::env::var("MEASURE_LOOP_MM").is_ok();
 
     let (z_amm_single, t_amm_single) =
-        gamm::measure_time(|| baseline_single::beta_coocurring_amm(&x, &y, BETA, L));
+        gamm::measure_time(|| baseline_single::beta_coocurring_amm(&x, &y, &config));
     let (z_amm_multi, t_amm_multi) =
-        gamm::measure_time(|| basic_multi::beta_coocurring_amm(&x, &y, BETA, L));
+        gamm::measure_time(|| basic_multi::beta_coocurring_amm(&x, &y, &config));
     let loops_res = measure_loop_mm.then(|| {
         gamm::measure_time(|| {
             let dim_m1 = x.nrows();
@@ -50,7 +49,6 @@ fn main() {
         println!("Loop-MM -- {:?}", t_loops);
     }
 
-    let nthreads = common::hardware_concurrency();
     println!("Lib-MM -- {:?}", t_lib);
     println!(
         "B-Coocurring-AMM (single):\tError {}; Time taken {:?}",
@@ -58,11 +56,11 @@ fn main() {
     );
     println!(
         "B-Coocurring-AMM (multi; {}):\tError {}; Time taken {:?}",
-        nthreads, e_amm_multi, t_amm_multi
+        config.t, e_amm_multi, t_amm_multi
     );
     println!(
         "Multi [{}] vs Single: Error {}; Performance {:?}x",
-        nthreads,
+        config.t,
         e_btwn_amm,
         t_amm_single.as_secs_f64() / t_amm_multi.as_secs_f64()
     );

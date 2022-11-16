@@ -1,0 +1,4 @@
+x = "./baseline/x.dat"
+y = "./baseline/y.dat"
+l = 400
+beta = 28.0

@@ -1,14 +1,18 @@
 use nalgebra as na;
 use num_traits::Zero;
 
-use crate::common::{self, Float, ZeroedColumns};
+use crate::{
+    common::{self, Float, ZeroedColumns},
+    config,
+};
 
 pub fn beta_coocurring_amm(
     x: &na::DMatrix<Float>,
     y: &na::DMatrix<Float>,
-    beta: Float,
-    l: usize,
+    config: &config::Config,
 ) -> na::DMatrix<Float> {
+    let config::Config { l, beta, .. } = *config;
+
     let (_, d1) = x.shape();
     let (_, d2) = y.shape();
     debug_assert_eq!(d1, d2);

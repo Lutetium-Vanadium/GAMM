@@ -1,6 +1,7 @@
 pub mod baseline_single;
 pub mod basic_multi;
 pub mod common;
+pub mod config;
 
 use std::{
     fs,
@@ -14,6 +15,24 @@ pub fn measure_time<T>(f: impl FnOnce() -> T) -> (T, time::Duration) {
     let start = time::Instant::now();
     let res = f();
     (res, start.elapsed())
+}
+
+fn get_config_inner() -> Option<config::Config> {
+    let mut args = std::env::args();
+
+    if args.len() < 2 {
+        return None;
+    }
+
+    config::Config::from_file(path::Path::new(
+        &args.next_back().expect("Checked len above"),
+    ))
+    .ok()
+    .flatten()
+}
+
+pub fn get_config() -> config::Config {
+    get_config_inner().unwrap_or_default()
 }
 
 pub fn load_matrix(path: &path::Path) -> io::Result<na::DMatrix<common::Float>> {
@@ -41,9 +60,8 @@ pub fn load_matrix(path: &path::Path) -> io::Result<na::DMatrix<common::Float>> 
     Ok(mat)
 }
 
-pub fn load_matrices() -> io::Result<(na::DMatrix<common::Float>, na::DMatrix<common::Float>)> {
-    Ok((
-        load_matrix(path::Path::new("./baseline/x.dat"))?,
-        load_matrix(path::Path::new("./baseline/y.dat"))?,
-    ))
+pub fn load_matrices(
+    config: &config::Config,
+) -> io::Result<(na::DMatrix<common::Float>, na::DMatrix<common::Float>)> {
+    Ok((load_matrix(&config.x)?, load_matrix(&config.y)?))
 }

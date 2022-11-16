@@ -3,38 +3,40 @@ use std::sync::{Barrier, Mutex};
 use nalgebra as na;
 use num_traits::Zero;
 
-use crate::common::{self, Float, ZeroedColumns};
+use crate::{
+    common::{self, Float, ZeroedColumns},
+    config,
+};
 
 pub fn beta_coocurring_amm(
     x: &na::DMatrix<Float>,
     y: &na::DMatrix<Float>,
-    beta: Float,
-    l: usize,
+    config: &config::Config,
 ) -> na::DMatrix<Float> {
+    let config::Config { l, beta, t, .. } = *config;
+
     let (m1, d1) = x.shape();
     let (m2, d2) = y.shape();
     assert_eq!(d1, d2);
     let d = d1;
 
-    let nthreads = common::hardware_concurrency();
-
     // FIXME this should not be needed. Write checks to make it work for non perfect splits
-    assert!(d % nthreads == 0);
-    let sub_col_size = d / nthreads;
+    assert!(d % t == 0);
+    let sub_col_size = d / t;
 
-    assert!(nthreads.is_power_of_two());
-    assert!(l <= d / nthreads);
+    assert!(t.is_power_of_two());
+    assert!(l <= d / t);
 
     let attenuate_vec =
         na::DVector::from_iterator(l, (0..l).map(|i| attenuate(beta, i as Float, l as Float)));
 
-    let barrier = Barrier::new(nthreads);
-    let matrices: Vec<_> = (0..nthreads)
+    let barrier = Barrier::new(t);
+    let matrices: Vec<_> = (0..t)
         .map(|_| Mutex::new((na::DMatrix::zeros(m1, l), na::DMatrix::zeros(m2, l))))
         .collect();
 
     std::thread::scope(|s| {
-        let handles: Vec<_> = (0..nthreads)
+        let handles: Vec<_> = (0..t)
             .map(|i| {
                 let barrier_ref = &barrier;
                 let matrices_ref = matrices.as_ref();
@@ -46,7 +48,7 @@ pub fn beta_coocurring_amm(
                 s.spawn(move || {
                     thread_task(
                         i,
-                        nthreads,
+                        t,
                         x_slice,
                         y_slice,
                         barrier_ref,
@@ -73,7 +75,7 @@ pub fn beta_coocurring_amm(
 
 fn thread_task(
     thread_id: usize,
-    nthreads: usize,
+    t: usize,
     x: na::DMatrixSlice<Float>,
     y: na::DMatrixSlice<Float>,
     barrier: &Barrier,
@@ -87,7 +89,7 @@ fn thread_task(
     // beta_coocurring_reduction requires half the threads of the previous iteration.
     //
     // NOTE: this doesn't work if nthreads is not a power of 2
-    let nruns = (thread_id | nthreads).trailing_zeros() + 1;
+    let nruns = (thread_id | t).trailing_zeros() + 1;
 
     let mut own_matrices = matrices[thread_id]
         .try_lock()

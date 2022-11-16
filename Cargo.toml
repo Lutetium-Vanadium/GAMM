@@ -7,6 +7,8 @@ default-run = "gamm"
 [dependencies]
 nalgebra = { version="0.31.3", features = ["rand"] }
 num-traits = "0.2.15"
+serde = { version="1.0.147", features=["derive"] }
+toml = "0.5.9"
 
 [profile.release]
 debug = true

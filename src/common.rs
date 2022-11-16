@@ -1,12 +1,7 @@
-use std::sync::atomic::{self, AtomicUsize};
-
 use nalgebra as na;
 use num_traits::Zero;
 
 pub type Float = f32;
-
-pub const L: usize = 400;
-pub const BETA: Float = 28.0;
 
 #[derive(Default)]
 pub struct ZeroedColumns {
@@ -119,30 +114,15 @@ pub fn find_l2_norm(m: na::DMatrix<Float>) -> Float {
     m.svd(false, false).singular_values[0]
 }
 
-static NTHREADS: AtomicUsize = AtomicUsize::new(usize::MAX);
-
 pub fn hardware_concurrency() -> usize {
-    if let Some(n) = option_env!("NTHREADS")
+    std::env::var("HARDWARE_CONCURRENCY")
         .map(|s| s.parse::<usize>().ok())
+        .ok()
         .flatten()
-    {
-        return n;
-    }
-
-    let mut nthreads = NTHREADS.load(atomic::Ordering::Relaxed);
-
-    if nthreads == usize::MAX {
-        nthreads = std::env::var("NTHREADS")
-            .map(|s| s.parse::<usize>().ok())
-            .ok()
-            .flatten()
-            .or_else(|| {
-                std::thread::available_parallelism()
-                    .map(std::num::NonZeroUsize::get)
-                    .ok()
-            })
-            .unwrap_or(1);
-        NTHREADS.store(nthreads, atomic::Ordering::SeqCst);
-    }
-    nthreads
+        .or_else(|| {
+            std::thread::available_parallelism()
+                .map(std::num::NonZeroUsize::get)
+                .ok()
+        })
+        .unwrap_or(1)
 }
