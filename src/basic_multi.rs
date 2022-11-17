@@ -20,12 +20,8 @@ pub fn beta_coocurring_amm(
     assert_eq!(d1, d2);
     let d = d1;
 
-    // FIXME this should not be needed. Write checks to make it work for non perfect splits
-    assert!(d % t == 0);
-    let sub_col_size = d / t;
-
-    assert!(t.is_power_of_two());
-    assert!(l <= d / t);
+    let sub_col_size_base = d / t;
+    let extra = d % t;
 
     let attenuate_vec =
         na::DVector::from_iterator(l, (0..l).map(|i| attenuate(beta, i as Float, l as Float)));
@@ -42,8 +38,14 @@ pub fn beta_coocurring_amm(
                 let matrices_ref = matrices.as_ref();
                 let attenuate_vec = attenuate_vec.column(0);
 
-                let x_slice = x.columns(i * sub_col_size, sub_col_size);
-                let y_slice = y.columns(i * sub_col_size, sub_col_size);
+                let (start_i, ncols) = if i <= extra {
+                    (i * (sub_col_size_base + 1), sub_col_size_base + 1)
+                } else {
+                    (i * sub_col_size_base + extra, sub_col_size_base)
+                };
+
+                let x_slice = x.columns(start_i, ncols);
+                let y_slice = y.columns(start_i, ncols);
 
                 s.spawn(move || {
                     thread_task(
@@ -73,6 +75,26 @@ pub fn beta_coocurring_amm(
     bx * by.transpose()
 }
 
+/// # Execution
+///
+/// For example, take t = 4, the theoretical tree will look something like this:
+/// ```text
+/// 0 --.
+///     +--.
+/// 1 --'  |
+///        +-- complete
+/// 2 --.  |
+///     +--'
+/// 3 --'
+/// ```
+///
+/// This is how it is performed:
+/// ```text
+/// 0 --+--+-- complete
+/// 1 --'  |
+/// 2 --+--'
+/// 3 --'
+/// ```
 fn thread_task(
     thread_id: usize,
     t: usize,
@@ -85,11 +107,15 @@ fn thread_task(
 ) {
     let d = x.ncols();
 
-    // The number of times this thread needs to run. Each parallel iterating of
-    // beta_coocurring_reduction requires half the threads of the previous iteration.
+    // The maximum number of times this thread needs to run. Each parallel iteration of
+    // beta_coocurring_reduction requires half the threads* of the previous iteration.
     //
-    // NOTE: this doesn't work if nthreads is not a power of 2
-    let nruns = (thread_id | t).trailing_zeros() + 1;
+    // For the case where t is not a power of 2, this division is imperfect, so for larger
+    // thread_id it will stop when the index of the thread to merge with goes out of bounds
+    //
+    // * when t is not a power of two, this may not be true. This is handled by the bounds
+    //   checking when getting the `other_matrices` in the loop.
+    let nruns = (thread_id | t.next_power_of_two()).trailing_zeros() + 1;
 
     let mut own_matrices = matrices[thread_id]
         .try_lock()
@@ -110,11 +136,17 @@ fn thread_task(
     by.copy_from(&y.columns(0, l));
 
     for i in 0..nruns {
-        let other_matrices = (i > 0).then(|| {
-            matrices[thread_id + 2usize.pow(i - 1)]
-                .lock()
-                .expect("couldn't lock other thread's matrix")
-        });
+        let other_matrices = if i > 0 {
+            match matrices.get(thread_id + 2usize.pow(i - 1)) {
+                Some(l) => Some(l.lock().expect("couldn't lock other thread's matrix")),
+                // If t is not a power of 2, then higher thread_ids may need to merge and reduce from
+                // threads that don't exist. In that case, the thread can return early as the thread to
+                // merge and reduce with is strictly increasing.
+                None => break,
+            }
+        } else {
+            None
+        };
 
         let (x, y) = other_matrices
             .as_ref()
