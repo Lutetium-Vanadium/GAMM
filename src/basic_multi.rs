@@ -38,7 +38,7 @@ pub fn beta_coocurring_amm(
                 let matrices_ref = matrices.as_ref();
                 let attenuate_vec = attenuate_vec.column(0);
 
-                let (start_i, ncols) = if i <= extra {
+                let (start_i, ncols) = if i < extra {
                     (i * (sub_col_size_base + 1), sub_col_size_base + 1)
                 } else {
                     (i * sub_col_size_base + extra, sub_col_size_base)
