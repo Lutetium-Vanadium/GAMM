@@ -16,6 +16,7 @@ struct ConfigOptional {
     t: Option<usize>,
 }
 
+#[derive(Debug)]
 pub struct Config {
     pub x: PathBuf,
     pub y: PathBuf,

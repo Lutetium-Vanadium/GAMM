@@ -32,7 +32,9 @@ fn get_config_inner() -> Option<config::Config> {
 }
 
 pub fn get_config() -> config::Config {
-    get_config_inner().unwrap_or_default()
+    let config = get_config_inner().unwrap_or_default();
+    println!("{:?}", config);
+    config
 }
 
 pub fn load_matrix(path: &path::Path) -> io::Result<na::DMatrix<common::Float>> {

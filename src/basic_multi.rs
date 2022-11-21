@@ -239,7 +239,7 @@ fn beta_coocurring_reduction(
                 v_t
             };
 
-            for i in 0..sv.shape().0 {
+            for i in 0..sv.len() {
                 if sv[i].is_zero() {
                     zeroed_cols.set_zeroed(i);
                 }
@@ -270,7 +270,7 @@ fn parameterized_reduce_rank(
     >,
     attenuate_vec: na::DVectorSlice<Float>,
 ) {
-    let delta = sv[sv.shape().1 / 2];
+    let delta = sv[0];
 
     sv.axpy(-delta, &attenuate_vec, 1.0);
     // TODO vectorize this?

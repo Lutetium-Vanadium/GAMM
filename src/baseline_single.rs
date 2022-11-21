@@ -81,7 +81,7 @@ pub fn beta_coocurring_amm(
             debug_assert!(check_no_zero_cols(&qx));
             debug_assert!(check_no_zero_cols(&qy));
 
-            for i in 0..sv.shape().0 {
+            for i in 0..sv.len() {
                 if sv[i].is_zero() {
                     zeroed_cols.set_zeroed(i);
                 }
@@ -114,7 +114,7 @@ fn parameterized_reduce_rank(
     >,
     attenuate_vec: &na::DVector<Float>,
 ) {
-    let delta = sv[sv.shape().1 / 2];
+    let delta = sv[0];
 
     sv.axpy(-delta, attenuate_vec, 1.0);
     sv.apply(|v| *v = v.max(0.0).sqrt());
