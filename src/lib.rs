@@ -2,6 +2,8 @@ pub mod baseline_single;
 pub mod basic_multi;
 pub mod common;
 pub mod config;
+pub mod self_svd_single;
+pub mod svd;
 
 use std::{
     fs,

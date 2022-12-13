@@ -1,4 +1,4 @@
-use gamm::{baseline_single, basic_multi, common};
+use gamm::{baseline_single, basic_multi, common, self_svd_single};
 use std::time::Duration;
 
 use nalgebra as na;
@@ -8,14 +8,17 @@ fn main() {
 
     let (x, y) = gamm::load_matrices(&config).expect("Couldn't load matrices");
 
-    // println!("x: {}", x.fixed_slice::<2, 2>(0, 0));
-    // println!("y: {}", y.fixed_slice::<2, 2>(0, 0));
     let measure_loop_mm = std::env::var("MEASURE_LOOP_MM").is_ok();
 
-    let (z_amm_single, t_amm_single) =
+    let (z_amm_baseline_single, t_amm_baseline_single) =
         gamm::measure_time(|| baseline_single::beta_coocurring_amm(&x, &y, &config));
+    println!("BASELINE SINGLE COMPLETE");
+    let (z_amm_selfsvd_single, t_amm_selfsvd_single) =
+        gamm::measure_time(|| self_svd_single::beta_coocurring_amm(&x, &y, &config));
+    println!("SELF SVD SINGLE COMPLETE");
     let (z_amm_multi, t_amm_multi) =
         gamm::measure_time(|| basic_multi::beta_coocurring_amm(&x, &y, &config));
+    println!("MULTI COMPLETE");
     let loops_res = measure_loop_mm.then(|| {
         gamm::measure_time(|| {
             let dim_m1 = x.nrows();
@@ -34,16 +37,24 @@ fn main() {
             res
         })
     });
+    println!("LOOPS COMPLETE");
     let (z_lib, t_lib) = gamm::measure_time(|| x * y.transpose());
     let (z, t_loops) = loops_res.unwrap_or((z_lib, Duration::MAX));
 
     println!("z: {}", z.fixed_slice::<2, 2>(0, 0));
-    println!("z_amm_single: {}", z_amm_single.fixed_slice::<2, 2>(0, 0));
+    println!(
+        "z_amm_single(lib svd): {}",
+        z_amm_baseline_single.fixed_slice::<2, 2>(0, 0)
+    );
+    println!(
+        "z_amm_single(self svd): {}",
+        z_amm_selfsvd_single.fixed_slice::<2, 2>(0, 0)
+    );
     println!("z_amm_multi: {}", z_amm_multi.fixed_slice::<2, 2>(0, 0));
 
-    let e_amm_single = common::find_l2_norm(z.clone() - &z_amm_single);
+    let e_amm_baseline_single = common::find_l2_norm(z.clone() - &z_amm_baseline_single);
+    let e_amm_selfsvd_single = common::find_l2_norm(z.clone() - &z_amm_selfsvd_single);
     let e_amm_multi = common::find_l2_norm(z - &z_amm_multi);
-    let e_btwn_amm = common::find_l2_norm(z_amm_single - z_amm_multi);
 
     if measure_loop_mm {
         println!("Loop-MM -- {:?}", t_loops);
@@ -51,17 +62,15 @@ fn main() {
 
     println!("Lib-MM -- {:?}", t_lib);
     println!(
-        "B-Coocurring-AMM (single):\tError {}; Time taken {:?}",
-        e_amm_single, t_amm_single
+        "B-Coocurring-AMM (single lib svd):\tError {}; Time taken {:?}",
+        e_amm_baseline_single, t_amm_baseline_single
     );
     println!(
-        "B-Coocurring-AMM (multi; {}):\tError {}; Time taken {:?}",
+        "B-Coocurring-AMM (single self svd):\tError {}; Time taken {:?}",
+        e_amm_selfsvd_single, t_amm_selfsvd_single
+    );
+    println!(
+        "B-Coocurring-AMM (multi; {}):\t\tError {}; Time taken {:?}",
         config.t, e_amm_multi, t_amm_multi
-    );
-    println!(
-        "Multi [{}] vs Single: Error {}; Performance {:?}x",
-        config.t,
-        e_btwn_amm,
-        t_amm_single.as_secs_f64() / t_amm_multi.as_secs_f64()
     );
 }
