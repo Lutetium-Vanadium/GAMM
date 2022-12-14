@@ -19,7 +19,6 @@ fn main() {
         || self_svd_single::beta_coocurring_amm(&x, &y, &config),
         "self svd single",
     );
-    println!("SELF SVD SINGLE COMPLETE");
 
     let (z_amm_multi, t_amm_multi) = gamm::measure_time(
         || basic_multi::beta_coocurring_amm(&x, &y, &config),

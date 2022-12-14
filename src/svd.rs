@@ -6,6 +6,7 @@ use std::{
     },
 };
 
+#[cfg(feature = "group")]
 use crossbeam_queue::ArrayQueue;
 use na::RawStorage;
 use na::SimdComplexField;
@@ -89,6 +90,10 @@ where
         max_sweeps: usize,
     ) -> Self {
         let delta = tol * matrix.norm_squared();
+        if cfg!(feature = "print-iter") {
+            print!("DELTA: {}", delta);
+        }
+
         let (n_generic, m_generic) = matrix.shape_generic();
         let n = n_generic.value();
 
@@ -102,7 +107,7 @@ where
         // Paper uses a queue, but the `q.drain(..)` will give the same effect
         let mut q = Vec::with_capacity(npivots_rotated);
 
-        for _ in 0..max_sweeps {
+        for i in 0..max_sweeps {
             for j in 0..(n - 1) {
                 for k in (j + 1)..n {
                     p.push((j, k, b.column(j).dot(&b.column(k))));
@@ -122,6 +127,9 @@ where
             p.truncate(npivots_rotated);
 
             if p[0].2 < delta {
+                if cfg!(feature = "print-iter") {
+                    println!("\t{} iterations", i);
+                }
                 break;
             }
 
@@ -152,7 +160,7 @@ where
         Svd { u: b, v, sv }.sorted_sv()
     }
 
-    pub fn jts_group(
+    pub fn jts_par(
         matrix: na::OMatrix<Float, D, D>,
         tol: Float,
         tau: usize,
@@ -180,7 +188,9 @@ where
 
         let barrier = Barrier::new(t);
         let counter = AtomicUsize::new(0);
+
         // For a n columns, there is a maximum of n/2 independent rotations that can occur.
+        #[cfg(feature = "group")]
         let rotations_queue = ArrayQueue::new(n / 2);
 
         let worker_args = WorkerArgs {
@@ -191,13 +201,14 @@ where
             delta,
             b: NonNull::new(b.as_mut_ptr()).expect("b is not empty"),
             v: NonNull::new(v.as_mut_ptr()).expect("v is not empty"),
+            #[cfg(feature = "group")]
             p_capacity: p.capacity(),
             p: NonNull::new(p.as_mut_ptr()).expect("p is allocated"),
-            q_capacity: q.capacity(),
             q: NonNull::new(q.as_mut_ptr()).expect("q is allocated"),
             shape: (n_generic, m_generic),
             barrier: &barrier,
             counter: &counter,
+            #[cfg(feature = "group")]
             rotations_queue: &rotations_queue,
         };
 
@@ -213,7 +224,7 @@ where
                     // - `v` points to a valid writeable `n*n` matrix buffer
                     // - `p` points to a valid writeable `npivots` `Vec` buffer
                     // - `q` points to a valid writeable `npivots_rotated` `Vec` buffer
-                    // - `q_capacity` is the capacity of the `q` `Vec`.
+                    // - `p_capacity` is the capacity of the `q` `Vec`.
                     // - `shape = (n, n)`
                     // - `barrier` is not waited on by any other threads, only threads running this
                     //   function
@@ -263,19 +274,14 @@ struct WorkerArgs<'b, D> {
     /// (j, k, b_j.dot(b_k))
     p: NonNull<(usize, usize, Float)>,
     q: NonNull<JacobiRotation>,
-    #[cfg_attr(not(feature = "group"), allow(dead_code))]
+    #[cfg(feature = "group")]
     p_capacity: usize,
-    #[cfg_attr(feature = "group", allow(dead_code))]
-    q_capacity: usize,
     shape: (D, D),
     barrier: &'b Barrier,
     counter: &'b AtomicUsize,
     /// (index, element of p)
     #[cfg(feature = "group")]
     rotations_queue: &'b ArrayQueue<(usize, (usize, usize, Float))>,
-    /// (index, element of q)
-    #[cfg(not(feature = "group"))]
-    rotations_queue: &'b ArrayQueue<JacobiRotation>,
 }
 
 // SAFETY: the pointers are aliased, however, it is only mutably accessed in a non-aliasing way
@@ -296,7 +302,6 @@ fn assert_copy<T: Copy>() {}
 /// - `p` points to a valid writeable `npivots` `Vec` buffer
 /// - `q` points to a valid writeable `npivots_rotated` `Vec` buffer
 /// - `p_capacity` is the capacity of the `p` `Vec`.
-/// - `q_capacity` is the capacity of the `q` `Vec`.
 /// - `shape = (n, n)`
 /// - `barrier` is not waited on by any other threads, only threads running this function
 /// - `completed` is not wrote to by any other threads, only threads running this function
@@ -391,8 +396,9 @@ where
         }
         // ===================================
 
-        if cfg!(feature = "group") {
-            // SAFETY: The caller guarantees that the size pointer and p_capacity is accurate for
+        #[cfg(feature = "group")]
+        {
+            // SAFETY: The caller guarantees that the p pointer and p_capacity is accurate for
             // the Vec. There are also npivots_rotated column-pairs created in phase 1.
             //
             // Since the Vec is in an Undroppable, it will not be dropped. It will also not
@@ -529,7 +535,10 @@ where
 
                 args.barrier.wait(); // Wait for all threads to finish this group
             }
-        } else if worker_id == MAIN_WORKER {
+        }
+
+        #[cfg(not(feature = "group"))]
+        {
             // ============  PHASE 2  ============
             // Generate rotations based on the top 1/tau fraction of column-pairs (in parallel).
             {
@@ -559,23 +568,27 @@ where
             args.barrier.wait(); // Wait for all threads to finish generating the Jacobi rotations.
 
             // ============  PHASE 3  ============
-            // Apply Jacobi rotations group wise
-
+            // Apply Jacobi rotations
             // Non parallel -- only MAIN_WORKER applies all rotations
 
-            // SAFETY: only the main worker executes this code. So we have exclusive access to all
-            // structures here.
-            let q = unsafe { std::slice::from_raw_parts(args.q.as_ptr(), args.npivots_rotated) };
+            if worker_id == MAIN_WORKER {
+                // SAFETY: only the main worker executes this code. So we have exclusive access to
+                // all structures here.
+                let q =
+                    unsafe { std::slice::from_raw_parts(args.q.as_ptr(), args.npivots_rotated) };
 
-            let b_slice = unsafe { std::slice::from_raw_parts_mut(args.b.as_ptr(), n * n) };
-            let mut b = na::MatrixSliceMut::from_slice_generic(b_slice, args.shape.0, args.shape.1);
+                let b_slice = unsafe { std::slice::from_raw_parts_mut(args.b.as_ptr(), n * n) };
+                let mut b =
+                    na::MatrixSliceMut::from_slice_generic(b_slice, args.shape.0, args.shape.1);
 
-            let v_slice = unsafe { std::slice::from_raw_parts_mut(args.v.as_ptr(), n * n) };
-            let mut v = na::MatrixSliceMut::from_slice_generic(v_slice, args.shape.0, args.shape.1);
+                let v_slice = unsafe { std::slice::from_raw_parts_mut(args.v.as_ptr(), n * n) };
+                let mut v =
+                    na::MatrixSliceMut::from_slice_generic(v_slice, args.shape.0, args.shape.1);
 
-            for &rotation in q {
-                rotation.apply_to(&mut b);
-                rotation.apply_to(&mut v);
+                for &rotation in q {
+                    rotation.apply_to(&mut b);
+                    rotation.apply_to(&mut v);
+                }
             }
         }
 
@@ -588,36 +601,6 @@ where
 
     if worker_id == MAIN_WORKER {
         args.counter.store(c, atomic::Ordering::Relaxed);
-    }
-}
-
-mod undroppable {
-    use std::{
-        mem::ManuallyDrop,
-        ops::{Deref, DerefMut},
-    };
-
-    #[repr(transparent)]
-    pub(super) struct Undroppable<T>(ManuallyDrop<T>);
-
-    impl<T> Undroppable<T> {
-        pub(super) fn new(value: T) -> Self {
-            Self(ManuallyDrop::new(value))
-        }
-    }
-
-    impl<T> Deref for Undroppable<T> {
-        type Target = T;
-
-        fn deref(&self) -> &Self::Target {
-            &*self.0
-        }
-    }
-
-    impl<T> DerefMut for Undroppable<T> {
-        fn deref_mut(&mut self) -> &mut Self::Target {
-            &mut *self.0
-        }
     }
 }
 
@@ -685,5 +668,36 @@ impl JacobiRotation {
         //      = ((c^2+s^2)B_k + tcBJ_j)/c
         // BJ_k = (1/c)B_k + tBJ_j
         col_k.axpy(self.t, &col_j, self.inv_c);
+    }
+}
+
+#[cfg(feature = "group")]
+mod undroppable {
+    use std::{
+        mem::ManuallyDrop,
+        ops::{Deref, DerefMut},
+    };
+
+    #[repr(transparent)]
+    pub(super) struct Undroppable<T>(ManuallyDrop<T>);
+
+    impl<T> Undroppable<T> {
+        pub(super) fn new(value: T) -> Self {
+            Self(ManuallyDrop::new(value))
+        }
+    }
+
+    impl<T> Deref for Undroppable<T> {
+        type Target = T;
+
+        fn deref(&self) -> &Self::Target {
+            &*self.0
+        }
+    }
+
+    impl<T> DerefMut for Undroppable<T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut *self.0
+        }
     }
 }
