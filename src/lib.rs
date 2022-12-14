@@ -13,10 +13,12 @@ use std::{
 
 use nalgebra as na;
 
-pub fn measure_time<T>(f: impl FnOnce() -> T) -> (T, time::Duration) {
+pub fn measure_time<T>(f: impl FnOnce() -> T, name: &str) -> (T, time::Duration) {
     let start = time::Instant::now();
     let res = f();
-    (res, start.elapsed())
+    let duration = start.elapsed();
+    println!("Finished {}", name);
+    (res, duration)
 }
 
 fn get_config_inner() -> Option<config::Config> {

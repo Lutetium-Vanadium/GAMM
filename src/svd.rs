@@ -160,7 +160,10 @@ where
         t: usize,
     ) -> Self {
         let delta = tol * matrix.norm_squared();
-        print!("DELTA: {}", delta);
+        if cfg!(feature = "print-iter") {
+            print!("DELTA: {}", delta);
+        }
+
         let (n_generic, m_generic) = matrix.shape_generic();
         let n = n_generic.value();
         assert_eq!(matrix.shape(), (n, n));
@@ -188,6 +191,7 @@ where
             delta,
             b: NonNull::new(b.as_mut_ptr()).expect("b is not empty"),
             v: NonNull::new(v.as_mut_ptr()).expect("v is not empty"),
+            p_capacity: p.capacity(),
             p: NonNull::new(p.as_mut_ptr()).expect("p is allocated"),
             q_capacity: q.capacity(),
             q: NonNull::new(q.as_mut_ptr()).expect("q is allocated"),
@@ -224,7 +228,9 @@ where
             let _ = handles.into_iter().map(|h| h.join());
         });
 
-        println!("\t{} iterations", counter.into_inner());
+        if cfg!(feature = "print-iter") {
+            println!("\t{} iterations", counter.into_inner());
+        }
 
         // Should the matrices be calculated and returned if max_sweeps is reached? Unclear
 
@@ -254,12 +260,21 @@ struct WorkerArgs<'b, D> {
     delta: Float,
     b: NonNull<Float>,
     v: NonNull<Float>,
+    /// (j, k, b_j.dot(b_k))
     p: NonNull<(usize, usize, Float)>,
     q: NonNull<JacobiRotation>,
+    #[cfg_attr(not(feature = "group"), allow(dead_code))]
+    p_capacity: usize,
+    #[cfg_attr(feature = "group", allow(dead_code))]
     q_capacity: usize,
     shape: (D, D),
     barrier: &'b Barrier,
     counter: &'b AtomicUsize,
+    /// (index, element of p)
+    #[cfg(feature = "group")]
+    rotations_queue: &'b ArrayQueue<(usize, (usize, usize, Float))>,
+    /// (index, element of q)
+    #[cfg(not(feature = "group"))]
     rotations_queue: &'b ArrayQueue<JacobiRotation>,
 }
 
@@ -268,6 +283,7 @@ unsafe impl<'b, D: Send> Send for WorkerArgs<'b, D> {}
 
 const MAIN_WORKER: usize = 0;
 const COMPLETED: usize = usize::MAX;
+const GENERATING: usize = usize::MAX - 1;
 
 fn assert_copy<T: Copy>() {}
 /// # Safety
@@ -279,6 +295,7 @@ fn assert_copy<T: Copy>() {}
 /// - `v` points to a valid writeable `n*n` matrix buffer
 /// - `p` points to a valid writeable `npivots` `Vec` buffer
 /// - `q` points to a valid writeable `npivots_rotated` `Vec` buffer
+/// - `p_capacity` is the capacity of the `p` `Vec`.
 /// - `q_capacity` is the capacity of the `q` `Vec`.
 /// - `shape = (n, n)`
 /// - `barrier` is not waited on by any other threads, only threads running this function
@@ -356,7 +373,11 @@ where
 
             // Barrier takes care of synchronisation, so relaxed ordering is fine
             args.counter.store(
-                if p[0].2 < args.delta { COMPLETED } else { 0 },
+                if p[0].2 < args.delta {
+                    COMPLETED
+                } else {
+                    GENERATING
+                },
                 atomic::Ordering::Relaxed,
             );
         }
@@ -370,133 +391,176 @@ where
         }
         // ===================================
 
-        // ============  PHASE 2  ============
-        // Generate rotations based on the top 1/tau fraction of column-pairs (in parallel).
-        {
-            // SAFETY: all worker threads are the in phase 2. Here b is read-only, so casting the b
-            // pointer to a MatrixSlice is ok.
-            //
-            // The pointer is also valid for n*n matrix (guaranteed by the caller)
-            let b_slice = unsafe { std::slice::from_raw_parts(args.b.as_ptr(), n * n) };
-            let b = na::MatrixSlice::from_slice_generic(b_slice, args.shape.0, args.shape.1);
-
-            for i in (worker_id..args.npivots_rotated).step_by(t) {
-                // SAFETY: Every i is unique amongst the threads.
-                //
-                // The caller has guaranteed that q has at least npivots_rotated elements and p has
-                // at least npivots >= npivots_rotated elements.
-                unsafe {
-                    let (j, k, d) = args.p.as_ptr().add(i).read();
-                    args.q
-                        .as_ptr()
-                        .add(i)
-                        .write(JacobiRotation::new(j, k, d, &b))
-                }
-            }
-        }
-        // ===================================
-
-        args.barrier.wait(); // Wait for all threads to finish generating the Jacobi rotations.
-
-        // ============  PHASE 3  ============
-        // Apply Jacobi rotations group wise
-
-        if cfg!(feature = "parallel_rotations") {
-            // SAFETY: The caller guarantees that the size pointer and q_capacity is accurate for
-            // the Vec. There are also npivots_rotated rotations created in phase 2.
+        if cfg!(feature = "group") {
+            // SAFETY: The caller guarantees that the size pointer and p_capacity is accurate for
+            // the Vec. There are also npivots_rotated column-pairs created in phase 1.
             //
             // Since the Vec is in an Undroppable, it will not be dropped. It will also not
             // reallocate as no resizing functions are called.
             let mut main_worker_data = (worker_id == MAIN_WORKER).then(|| unsafe {
                 (
                     undroppable::Undroppable::new(Vec::from_raw_parts(
-                        args.q.as_ptr(),
+                        args.p.as_ptr(),
                         args.npivots_rotated,
-                        args.q_capacity,
+                        args.p_capacity,
                     )),
                     // used: Vec -- each element represents column i being used in group used[i]
                     vec![usize::MAX; n],
                 )
             });
 
-            'group_for: for i in 0.. {
-                // The main worker will first find rotations to be performed for this group and then
-                // move on to performing rotations themselves
-                if let Some((q, used)) = main_worker_data.as_mut() {
-                    q.retain(|&rotation| {
-                        // A non-independent rotation is already in this group
-                        if used[rotation.j] == i || used[rotation.k] == i {
-                            return true;
+            for group_number in 0.. {
+                // pre phase 2 check if main worker set completed last time round
+                if args.counter.load(atomic::Ordering::SeqCst) == COMPLETED {
+                    break;
+                }
+
+                // ============  PHASE 2  ============
+                // Generate rotations for the column-pairs in this group (in parallel).
+                let q_len = {
+                    // SAFETY: all worker threads are in phase 2. Here b is read-only, so casting
+                    // the b pointer to a MatrixSlice is ok.
+                    //
+                    // The pointer is also valid for n*n matrix (guaranteed by the caller)
+                    let b_slice = unsafe { std::slice::from_raw_parts(args.b.as_ptr(), n * n) };
+                    let b =
+                        na::MatrixSlice::from_slice_generic(b_slice, args.shape.0, args.shape.1);
+
+                    // The main worker will first find rotations to be performed for this group and then
+                    // move on to performing rotations themselves
+                    if let Some((p, used)) = main_worker_data.as_mut() {
+                        let mut q_index = 0;
+                        p.retain(|&(j, k, d)| {
+                            // A non-independent rotation is already in this group
+                            if used[j] == group_number || used[k] == group_number {
+                                return true;
+                            }
+
+                            // Rotation is independent, add it to this group.
+                            args.rotations_queue
+                                .push((q_index, (j, k, d)))
+                                .expect("Queue should have enough capacity");
+                            used[j] = group_number;
+                            used[k] = group_number;
+                            q_index += 1;
+
+                            false
+                        });
+
+                        args.counter.store(q_index, atomic::Ordering::SeqCst);
+                    }
+
+                    loop {
+                        // Each thread first tries to take a new rotation to perform. If a rotation is
+                        // found, the thread will apply it
+                        if let Some((i, (j, k, d))) = args.rotations_queue.pop() {
+                            // SAFETY: Every i is unique amongst the threads and i < npivots_rotated
+                            //
+                            // The caller has guaranteed that q has a capacity of at least
+                            // npivots_rotated
+                            unsafe {
+                                args.q
+                                    .as_ptr()
+                                    .add(i)
+                                    .write(JacobiRotation::new(j, k, d, &b))
+                            }
+                            continue;
                         }
 
-                        // Rotation is independent, add it to this group.
-                        args.rotations_queue
-                            .push(rotation)
-                            .expect("Queue should have enough capacity");
-                        used[rotation.j] = i;
-                        used[rotation.k] = i;
-
-                        false
-                    });
-
-                    if q.is_empty() {
-                        args.counter.store(COMPLETED, atomic::Ordering::SeqCst);
-
-                        // sanity check -- we do not actually own the q Vec, so nothing about should
-                        // change
-                        assert_eq!(q.as_mut_ptr(), args.q.as_ptr());
-                        assert_eq!(q.capacity(), args.q_capacity);
-
-                        break 'group_for;
+                        let counter = args.counter.load(atomic::Ordering::SeqCst);
+                        // If no rotation is found, check if the main worker has signaled that the
+                        // rotations are complete
+                        if counter != GENERATING {
+                            break counter;
+                        }
                     }
+                };
+                // ===================================
 
-                    assert_eq!(args.counter.fetch_add(1, atomic::Ordering::SeqCst), i);
+                args.barrier.wait(); // Wait for all threads to finish generating rotations
+
+                // ============  PHASE 3  ============
+                // Apply Jacobi rotations in parallel
+
+                for i in (worker_id..q_len).step_by(t) {
+                    // SAFETY: the main worker makes sure rotations in the queue for a particular
+                    // group are independent. So, each column will only be referenced once in
+                    // the threads
+                    //
+                    // The slice is also valid as j,k < n and b and v are n*n matrices
+                    // (guaranteed by the caller)
+                    let get_col_mut = |col, ptr: *mut Float| unsafe {
+                        na::VectorSliceMut::from_slice_generic(
+                            std::slice::from_raw_parts_mut(ptr.add(n * col), n),
+                            args.shape.0,
+                            na::Const::<1>,
+                        )
+                    };
+
+                    // SAFETY: the main worker makes sure that there are q_len number of elements
+                    //
+                    // i < qlen
+                    let rotation = unsafe { args.q.as_ptr().add(i).read() };
+
+                    let b_col_j = get_col_mut(rotation.j, args.b.as_ptr());
+                    let b_col_k = get_col_mut(rotation.k, args.b.as_ptr());
+
+                    let v_col_j = get_col_mut(rotation.j, args.v.as_ptr());
+                    let v_col_k = get_col_mut(rotation.k, args.v.as_ptr());
+
+                    rotation.apply_to_columns(b_col_j, b_col_k);
+                    rotation.apply_to_columns(v_col_j, v_col_k);
                 }
 
-                loop {
-                    // Each thread first tries to take a new rotation to perform. If a rotation is
-                    // found, the thread will apply it
-                    if let Some(rotation) = args.rotations_queue.pop() {
-                        // SAFETY: the main worker makes sure rotations in the queue for a particular
-                        // group are independent. So, each column will only be referenced once in
-                        // the threads
-                        //
-                        // The slice is also valid as j,k < n and b and v are n*n matrices
-                        // (guaranteed by the caller)
-                        let get_col_mut = |col, ptr: *mut Float| unsafe {
-                            na::VectorSliceMut::from_slice_generic(
-                                std::slice::from_raw_parts_mut(ptr.add(n * col), n),
-                                args.shape.0,
-                                na::Const::<1>,
-                            )
-                        };
+                // ===================================
 
-                        let b_col_j = get_col_mut(rotation.j, args.b.as_ptr());
-                        let b_col_k = get_col_mut(rotation.k, args.b.as_ptr());
+                // post phase-3 for main worker -- perform before barrier so that
+                if let Some((p, _)) = main_worker_data.as_mut() {
+                    args.counter.store(
+                        if p.is_empty() { COMPLETED } else { GENERATING },
+                        atomic::Ordering::SeqCst,
+                    );
 
-                        let v_col_j = get_col_mut(rotation.j, args.v.as_ptr());
-                        let v_col_k = get_col_mut(rotation.k, args.v.as_ptr());
-
-                        rotation.apply_to_columns(b_col_j, b_col_k);
-                        rotation.apply_to_columns(v_col_j, v_col_k);
-
-                        continue;
-                    }
-
-                    let counter = args.counter.load(atomic::Ordering::SeqCst);
-                    // If no rotation is found, check if the main worker has signaled that the
-                    // rotations are complete
-                    if counter == COMPLETED {
-                        break 'group_for;
-                    // otherwise check if we should go to the next group
-                    } else if counter != i {
-                        break;
-                    }
+                    // sanity check -- we do not actually own the q Vec, so nothing about should
+                    // change
+                    assert_eq!(p.as_mut_ptr(), args.p.as_ptr());
+                    assert_eq!(p.capacity(), args.p_capacity);
                 }
 
-                args.barrier.wait(); // Wait for all threads to finish applying the ith group
+                args.barrier.wait(); // Wait for all threads to finish this group
             }
         } else if worker_id == MAIN_WORKER {
+            // ============  PHASE 2  ============
+            // Generate rotations based on the top 1/tau fraction of column-pairs (in parallel).
+            {
+                // SAFETY: all worker threads are the in phase 2. Here b is read-only, so casting
+                // the b pointer to a MatrixSlice is ok.
+                //
+                // The pointer is also valid for n*n matrix (guaranteed by the caller)
+                let b_slice = unsafe { std::slice::from_raw_parts(args.b.as_ptr(), n * n) };
+                let b = na::MatrixSlice::from_slice_generic(b_slice, args.shape.0, args.shape.1);
+
+                for i in (worker_id..args.npivots_rotated).step_by(t) {
+                    // SAFETY: Every i is unique amongst the threads.
+                    //
+                    // The caller has guaranteed that q has at least npivots_rotated elements and p
+                    // has at least npivots >= npivots_rotated elements.
+                    unsafe {
+                        let (j, k, d) = args.p.as_ptr().add(i).read();
+                        args.q
+                            .as_ptr()
+                            .add(i)
+                            .write(JacobiRotation::new(j, k, d, &b))
+                    }
+                }
+            }
+            // ===================================
+
+            args.barrier.wait(); // Wait for all threads to finish generating the Jacobi rotations.
+
+            // ============  PHASE 3  ============
+            // Apply Jacobi rotations group wise
+
             // Non parallel -- only MAIN_WORKER applies all rotations
 
             // SAFETY: only the main worker executes this code. So we have exclusive access to all

@@ -10,35 +10,44 @@ fn main() {
 
     let measure_loop_mm = std::env::var("MEASURE_LOOP_MM").is_ok();
 
-    let (z_amm_baseline_single, t_amm_baseline_single) =
-        gamm::measure_time(|| baseline_single::beta_coocurring_amm(&x, &y, &config));
-    println!("BASELINE SINGLE COMPLETE");
-    let (z_amm_selfsvd_single, t_amm_selfsvd_single) =
-        gamm::measure_time(|| self_svd_single::beta_coocurring_amm(&x, &y, &config));
+    let (z_amm_baseline_single, t_amm_baseline_single) = gamm::measure_time(
+        || baseline_single::beta_coocurring_amm(&x, &y, &config),
+        "baseline single",
+    );
+
+    let (z_amm_selfsvd_single, t_amm_selfsvd_single) = gamm::measure_time(
+        || self_svd_single::beta_coocurring_amm(&x, &y, &config),
+        "self svd single",
+    );
     println!("SELF SVD SINGLE COMPLETE");
-    let (z_amm_multi, t_amm_multi) =
-        gamm::measure_time(|| basic_multi::beta_coocurring_amm(&x, &y, &config));
-    println!("MULTI COMPLETE");
+
+    let (z_amm_multi, t_amm_multi) = gamm::measure_time(
+        || basic_multi::beta_coocurring_amm(&x, &y, &config),
+        "multi",
+    );
+
     let loops_res = measure_loop_mm.then(|| {
-        gamm::measure_time(|| {
-            let dim_m1 = x.nrows();
-            let dim_m2 = y.nrows();
-            let mut res: na::DMatrix<f32> = na::DMatrix::zeros(dim_m1, dim_m2);
-            for i in 0..dim_m1 {
-                for j in 0..dim_m2 {
-                    res[(i, j)] = x
-                        .row(i)
-                        .iter()
-                        .zip(y.row(j).iter())
-                        .map(|(&x, &y)| x * y)
-                        .sum();
+        gamm::measure_time(
+            || {
+                let dim_m1 = x.nrows();
+                let dim_m2 = y.nrows();
+                let mut res: na::DMatrix<f32> = na::DMatrix::zeros(dim_m1, dim_m2);
+                for i in 0..dim_m1 {
+                    for j in 0..dim_m2 {
+                        res[(i, j)] = x
+                            .row(i)
+                            .iter()
+                            .zip(y.row(j).iter())
+                            .map(|(&x, &y)| x * y)
+                            .sum();
+                    }
                 }
-            }
-            res
-        })
+                res
+            },
+            "loop mm",
+        )
     });
-    println!("LOOPS COMPLETE");
-    let (z_lib, t_lib) = gamm::measure_time(|| x * y.transpose());
+    let (z_lib, t_lib) = gamm::measure_time(|| x * y.transpose(), "lib mm");
     let (z, t_loops) = loops_res.unwrap_or((z_lib, Duration::MAX));
 
     println!("z: {}", z.fixed_slice::<2, 2>(0, 0));

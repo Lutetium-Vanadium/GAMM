@@ -12,7 +12,8 @@ serde = { version="1.0.147", features=["derive"] }
 toml = "0.5.9"
 
 [features]
-parallel_rotations=[]
+group=[]
+print-iter=[]
 
 [profile.release]
 debug = true
