@@ -12,6 +12,7 @@ serde = { version="1.0.147", features=["derive"] }
 toml = "0.5.9"
 
 [features]
+profile=[]
 par-svd=[]
 group=["par-svd", "crossbeam-queue"]
 print-iter=[]

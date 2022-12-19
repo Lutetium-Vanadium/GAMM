@@ -126,3 +126,20 @@ pub fn hardware_concurrency() -> usize {
         })
         .unwrap_or(1)
 }
+
+/// Partition the slice into two segments according to predicate. Elements for which the predicate
+/// returns `true` are kept in the beginning in the same order as which they occur in the slice.
+/// Elements for which the predicate returns `false` are stored starting at the returned index in
+/// random order.
+pub fn partition<T, P: FnMut(&T) -> bool>(slice: &mut [T], mut predicate: P) -> usize {
+    let mut parition_point = 0;
+
+    for i in 0..slice.len() {
+        if predicate(&slice[i]) {
+            slice.swap(parition_point, i);
+            parition_point += 1;
+        }
+    }
+
+    parition_point
+}

@@ -1,3 +1,5 @@
+#![feature(slice_take)]
+
 pub mod baseline_single;
 pub mod basic_multi;
 pub mod common;

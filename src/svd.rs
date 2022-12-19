@@ -9,10 +9,23 @@ use std::{
 #[cfg(feature = "group")]
 use crossbeam_queue::ArrayQueue;
 use na::RawStorage;
-use na::SimdComplexField;
 use nalgebra as na;
 
 use crate::common::Float;
+use rotation::JacobiRotation;
+
+mod rotation;
+mod worker_phase1;
+#[cfg(feature = "group")]
+mod worker_phases_group;
+#[cfg(not(feature = "group"))]
+mod worker_phases_simple_par;
+
+use worker_phase1::jts_group_worker_phase_1;
+#[cfg(feature = "group")]
+use worker_phases_group::{jts_group_worker_phase_2, jts_group_worker_phase_3};
+#[cfg(not(feature = "group"))]
+use worker_phases_simple_par::{jts_group_worker_phase_2, jts_group_worker_phase_3};
 
 pub struct Svd<D: na::Dim>
 where
@@ -201,8 +214,6 @@ where
             delta,
             b: NonNull::new(b.as_mut_ptr()).expect("b is not empty"),
             v: NonNull::new(v.as_mut_ptr()).expect("v is not empty"),
-            #[cfg(feature = "group")]
-            p_capacity: p.capacity(),
             p: NonNull::new(p.as_mut_ptr()).expect("p is allocated"),
             q: NonNull::new(q.as_mut_ptr()).expect("q is allocated"),
             shape: (n_generic, m_generic),
@@ -274,8 +285,6 @@ struct WorkerArgs<'b, D> {
     /// (j, k, b_j.dot(b_k))
     p: NonNull<(usize, usize, Float)>,
     q: NonNull<JacobiRotation>,
-    #[cfg(feature = "group")]
-    p_capacity: usize,
     shape: (D, D),
     barrier: &'b Barrier,
     counter: &'b AtomicUsize,
@@ -319,73 +328,13 @@ where
     assert_copy::<(usize, usize, Float)>();
     assert_copy::<JacobiRotation>();
 
-    let n = args.n;
     let mut c = args.max_sweeps;
 
     for i in 0..args.max_sweeps {
         // ============  PHASE 1  ============
         // Generate columns on which rotations will be applied
 
-        // ------------ PHASE 1.1 ------------
-        // Generate all the possible column pairs (in parallel).
-        {
-            // SAFETY: all worker threads are the in phase 1.1. Here b is read-only, so casting the
-            // b pointer to a MatrixSlice is ok.
-            //
-            // The pointer is also valid for n*n matrix (guaranteed by the caller)
-            let b_slice = unsafe { std::slice::from_raw_parts(args.b.as_ptr(), n * n) };
-            let b = na::MatrixSlice::from_slice_generic(b_slice, args.shape.0, args.shape.1);
-            for j in (worker_id..(n - 1)).step_by(t) {
-                for k in (j + 1)..n {
-                    // SAFETY: caller guarantees p points to a pre-allocated buffer which is
-                    // writeable. Each index here is unique and so writing to it in parallel is ok.
-                    unsafe {
-                        args.p
-                            .as_ptr()
-                            // Each iteration (j) has (n-(j+1)) inner iterations. Current index will
-                            // be sum of number of previous inner iterations plus number of inner
-                            // iterations done for this time.
-                            //
-                            //   vvvvvvvvvvvvvvvvvvvvvvvvvvv-- number of previous inner iterations
-                            .add((j * (2 * n - (j + 1)) / 2) + (k - (j + 1)))
-                            //             number of current --^^^^^^^^^^^^^
-                            //              inner iterations
-                            .write((j, k, b.column(j).dot(&b.column(k))))
-                    };
-                }
-            }
-        }
-
-        // Should this sort happen before or after the truncate? The algorithm block indicates
-        // after, but that makes less sense (why compute all the pivots, and not just the
-        // truncated amount?). The text seems to suggest that the truncate is performed after as
-        // well.
-
-        args.barrier.wait(); // Wait for p to be filled by all threads. Only then commence sorting
-
-        // ------------ PHASE 1.2 ------------
-        // Sort the column-pairs by dot-product. This is performed only by the main worker.
-
-        if worker_id == MAIN_WORKER {
-            // SAFETY: caller guarantees p points to a pre-allocated buffer which is npivots long.
-            // The values of p were written already in phase 1.1
-            let p = unsafe { std::slice::from_raw_parts_mut(args.p.as_ptr(), args.npivots) };
-
-            // Sort by descending order of dot-products
-            p.sort_unstable_by(|(_, _, a), (_, _, b)| {
-                b.partial_cmp(&a).expect("Singular value was NaN")
-            });
-
-            // Barrier takes care of synchronisation, so relaxed ordering is fine
-            args.counter.store(
-                if p[0].2 < args.delta {
-                    COMPLETED
-                } else {
-                    GENERATING
-                },
-                atomic::Ordering::Relaxed,
-            );
-        }
+        unsafe { jts_group_worker_phase_1(worker_id, t, &args) };
 
         args.barrier.wait(); // Wait for MAIN_WORKER to sort and (possibly) set exit condition
 
@@ -398,20 +347,13 @@ where
 
         #[cfg(feature = "group")]
         {
-            // SAFETY: The caller guarantees that the p pointer and p_capacity is accurate for
-            // the Vec. There are also npivots_rotated column-pairs created in phase 1.
-            //
-            // Since the Vec is in an Undroppable, it will not be dropped. It will also not
-            // reallocate as no resizing functions are called.
+            // SAFETY: There were npivots >= npivots_rotated column-pairs generated in phase 1. So
+            // there are enough initialised elements
             let mut main_worker_data = (worker_id == MAIN_WORKER).then(|| unsafe {
                 (
-                    undroppable::Undroppable::new(Vec::from_raw_parts(
-                        args.p.as_ptr(),
-                        args.npivots_rotated,
-                        args.p_capacity,
-                    )),
+                    std::slice::from_raw_parts_mut(args.p.as_ptr(), args.npivots_rotated),
                     // used: Vec -- each element represents column i being used in group used[i]
-                    vec![usize::MAX; n],
+                    vec![usize::MAX; args.n],
                 )
             });
 
@@ -423,63 +365,14 @@ where
 
                 // ============  PHASE 2  ============
                 // Generate rotations for the column-pairs in this group (in parallel).
-                let q_len = {
-                    // SAFETY: all worker threads are in phase 2. Here b is read-only, so casting
-                    // the b pointer to a MatrixSlice is ok.
-                    //
-                    // The pointer is also valid for n*n matrix (guaranteed by the caller)
-                    let b_slice = unsafe { std::slice::from_raw_parts(args.b.as_ptr(), n * n) };
-                    let b =
-                        na::MatrixSlice::from_slice_generic(b_slice, args.shape.0, args.shape.1);
-
-                    // The main worker will first find rotations to be performed for this group and then
-                    // move on to performing rotations themselves
-                    if let Some((p, used)) = main_worker_data.as_mut() {
-                        let mut q_index = 0;
-                        p.retain(|&(j, k, d)| {
-                            // A non-independent rotation is already in this group
-                            if used[j] == group_number || used[k] == group_number {
-                                return true;
-                            }
-
-                            // Rotation is independent, add it to this group.
-                            args.rotations_queue
-                                .push((q_index, (j, k, d)))
-                                .expect("Queue should have enough capacity");
-                            used[j] = group_number;
-                            used[k] = group_number;
-                            q_index += 1;
-
-                            false
-                        });
-
-                        args.counter.store(q_index, atomic::Ordering::SeqCst);
-                    }
-
-                    loop {
-                        // Each thread first tries to take a new rotation to perform. If a rotation is
-                        // found, the thread will apply it
-                        if let Some((i, (j, k, d))) = args.rotations_queue.pop() {
-                            // SAFETY: Every i is unique amongst the threads and i < npivots_rotated
-                            //
-                            // The caller has guaranteed that q has a capacity of at least
-                            // npivots_rotated
-                            unsafe {
-                                args.q
-                                    .as_ptr()
-                                    .add(i)
-                                    .write(JacobiRotation::new(j, k, d, &b))
-                            }
-                            continue;
-                        }
-
-                        let counter = args.counter.load(atomic::Ordering::SeqCst);
-                        // If no rotation is found, check if the main worker has signaled that the
-                        // rotations are complete
-                        if counter != GENERATING {
-                            break counter;
-                        }
-                    }
+                let q_len = unsafe {
+                    jts_group_worker_phase_2(
+                        worker_id,
+                        t,
+                        &args,
+                        main_worker_data.as_mut(),
+                        group_number,
+                    )
                 };
                 // ===================================
 
@@ -488,35 +381,7 @@ where
                 // ============  PHASE 3  ============
                 // Apply Jacobi rotations in parallel
 
-                for i in (worker_id..q_len).step_by(t) {
-                    // SAFETY: the main worker makes sure rotations in the queue for a particular
-                    // group are independent. So, each column will only be referenced once in
-                    // the threads
-                    //
-                    // The slice is also valid as j,k < n and b and v are n*n matrices
-                    // (guaranteed by the caller)
-                    let get_col_mut = |col, ptr: *mut Float| unsafe {
-                        na::VectorSliceMut::from_slice_generic(
-                            std::slice::from_raw_parts_mut(ptr.add(n * col), n),
-                            args.shape.0,
-                            na::Const::<1>,
-                        )
-                    };
-
-                    // SAFETY: the main worker makes sure that there are q_len number of elements
-                    //
-                    // i < qlen
-                    let rotation = unsafe { args.q.as_ptr().add(i).read() };
-
-                    let b_col_j = get_col_mut(rotation.j, args.b.as_ptr());
-                    let b_col_k = get_col_mut(rotation.k, args.b.as_ptr());
-
-                    let v_col_j = get_col_mut(rotation.j, args.v.as_ptr());
-                    let v_col_k = get_col_mut(rotation.k, args.v.as_ptr());
-
-                    rotation.apply_to_columns(b_col_j, b_col_k);
-                    rotation.apply_to_columns(v_col_j, v_col_k);
-                }
+                unsafe { jts_group_worker_phase_3(worker_id, t, &args, q_len) }
 
                 // ===================================
 
@@ -526,11 +391,6 @@ where
                         if p.is_empty() { COMPLETED } else { GENERATING },
                         atomic::Ordering::SeqCst,
                     );
-
-                    // sanity check -- we do not actually own the q Vec, so nothing about should
-                    // change
-                    assert_eq!(p.as_mut_ptr(), args.p.as_ptr());
-                    assert_eq!(p.capacity(), args.p_capacity);
                 }
 
                 args.barrier.wait(); // Wait for all threads to finish this group
@@ -541,28 +401,7 @@ where
         {
             // ============  PHASE 2  ============
             // Generate rotations based on the top 1/tau fraction of column-pairs (in parallel).
-            {
-                // SAFETY: all worker threads are the in phase 2. Here b is read-only, so casting
-                // the b pointer to a MatrixSlice is ok.
-                //
-                // The pointer is also valid for n*n matrix (guaranteed by the caller)
-                let b_slice = unsafe { std::slice::from_raw_parts(args.b.as_ptr(), n * n) };
-                let b = na::MatrixSlice::from_slice_generic(b_slice, args.shape.0, args.shape.1);
-
-                for i in (worker_id..args.npivots_rotated).step_by(t) {
-                    // SAFETY: Every i is unique amongst the threads.
-                    //
-                    // The caller has guaranteed that q has at least npivots_rotated elements and p
-                    // has at least npivots >= npivots_rotated elements.
-                    unsafe {
-                        let (j, k, d) = args.p.as_ptr().add(i).read();
-                        args.q
-                            .as_ptr()
-                            .add(i)
-                            .write(JacobiRotation::new(j, k, d, &b))
-                    }
-                }
-            }
+            unsafe { jts_group_worker_phase_2(worker_id, t, &args) };
             // ===================================
 
             args.barrier.wait(); // Wait for all threads to finish generating the Jacobi rotations.
@@ -570,134 +409,18 @@ where
             // ============  PHASE 3  ============
             // Apply Jacobi rotations
             // Non parallel -- only MAIN_WORKER applies all rotations
-
-            if worker_id == MAIN_WORKER {
-                // SAFETY: only the main worker executes this code. So we have exclusive access to
-                // all structures here.
-                let q =
-                    unsafe { std::slice::from_raw_parts(args.q.as_ptr(), args.npivots_rotated) };
-
-                let b_slice = unsafe { std::slice::from_raw_parts_mut(args.b.as_ptr(), n * n) };
-                let mut b =
-                    na::MatrixSliceMut::from_slice_generic(b_slice, args.shape.0, args.shape.1);
-
-                let v_slice = unsafe { std::slice::from_raw_parts_mut(args.v.as_ptr(), n * n) };
-                let mut v =
-                    na::MatrixSliceMut::from_slice_generic(v_slice, args.shape.0, args.shape.1);
-
-                for &rotation in q {
-                    rotation.apply_to(&mut b);
-                    rotation.apply_to(&mut v);
-                }
-            }
+            unsafe { jts_group_worker_phase_3(worker_id, t, &args) };
+            // ===================================
         }
-
-        // ===================================
 
         args.barrier.wait(); // Wait for iteration to complete so next iteration can be started
     }
 
-    args.barrier.wait();
+    if cfg!(feature = "print-iter") {
+        args.barrier.wait(); // Wait for all threads to have read counter == COMPLETED
 
-    if worker_id == MAIN_WORKER {
-        args.counter.store(c, atomic::Ordering::Relaxed);
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct JacobiRotation {
-    c: Float,
-    s: Float,
-    inv_c: Float,
-    t: Float,
-    j: usize,
-    k: usize,
-}
-
-impl JacobiRotation {
-    fn new<D: na::Dim, S: na::Storage<Float, D, D>>(
-        j: usize,
-        k: usize,
-        d: Float,
-        a: &na::Matrix<Float, D, D, S>,
-    ) -> Self
-    where
-        na::DefaultAllocator: na::allocator::Allocator<Float, D, D>,
-    {
-        let gamma = (a.column(k).norm_squared() - a.column(j).norm_squared()) / (2.0 * d);
-        let t = (1.0 / (gamma.simd_abs() + (gamma.simd_powi(2) + 1.0).simd_sqrt())).copysign(gamma);
-        let inv_c = (t.simd_powi(2) + 1.0).simd_sqrt();
-        let c = 1.0 / inv_c;
-        let s = t * c;
-        Self {
-            c,
-            s,
-            j,
-            k,
-            inv_c,
-            t,
-        }
-    }
-
-    fn apply_to<D: na::Dim, S>(self, mat: &mut na::Matrix<Float, D, D, S>)
-    where
-        S: na::StorageMut<Float, D, D>,
-        na::DefaultAllocator: na::allocator::Allocator<Float, D, D>,
-    {
-        let (mut a, mut b) = mat.columns_range_pair_mut(0..self.k, self.k..);
-
-        self.apply_to_columns(a.column_mut(self.j), b.column_mut(0));
-    }
-
-    fn apply_to_columns<D: na::Dim, S: na::StorageMut<Float, D, na::U1>>(
-        self,
-        mut col_j: na::Matrix<Float, D, na::U1, S>,
-        mut col_k: na::Matrix<Float, D, na::U1, S>,
-    ) where
-        na::DefaultAllocator: na::allocator::Allocator<Float, D, D>,
-    {
-        // BJ_j = cB_j - sB_k
-        col_j.axpy(-self.s, &col_k, self.c);
-
-        // BJ_k = cB_k + sB_j
-        //
-        // Since we have modified B_j in place, now B_j = BJ_j = cB_j - sB_k.
-        // So B_j = (BJ_j + sB_k)/c
-        // So,
-        // BJ_k = cB_k + s(BJ_j + sB_k)/c
-        //      = ((c^2+s^2)B_k + tcBJ_j)/c
-        // BJ_k = (1/c)B_k + tBJ_j
-        col_k.axpy(self.t, &col_j, self.inv_c);
-    }
-}
-
-#[cfg(feature = "group")]
-mod undroppable {
-    use std::{
-        mem::ManuallyDrop,
-        ops::{Deref, DerefMut},
-    };
-
-    #[repr(transparent)]
-    pub(super) struct Undroppable<T>(ManuallyDrop<T>);
-
-    impl<T> Undroppable<T> {
-        pub(super) fn new(value: T) -> Self {
-            Self(ManuallyDrop::new(value))
-        }
-    }
-
-    impl<T> Deref for Undroppable<T> {
-        type Target = T;
-
-        fn deref(&self) -> &Self::Target {
-            &*self.0
-        }
-    }
-
-    impl<T> DerefMut for Undroppable<T> {
-        fn deref_mut(&mut self) -> &mut Self::Target {
-            &mut *self.0
+        if worker_id == MAIN_WORKER {
+            args.counter.store(c, atomic::Ordering::Relaxed);
         }
     }
 }
