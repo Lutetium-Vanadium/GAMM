@@ -5,7 +5,6 @@ edition = "2021"
 default-run = "gamm"
 
 [dependencies]
-crossbeam-queue = { version="0.3.8", optional=true }
 nalgebra = "0.31.3"
 num-traits = "0.2.15"
 serde = { version="1.0.147", features=["derive"] }
@@ -14,7 +13,7 @@ toml = "0.5.9"
 [features]
 profile=[]
 par-svd=[]
-group=["par-svd", "crossbeam-queue"]
+group=["par-svd"]
 print-iter=[]
 
 [profile.release]

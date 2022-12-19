@@ -67,7 +67,7 @@ pub(super) unsafe fn jts_group_worker_phase_1<D: na::Dim>(
             if p[0].2 < args.delta {
                 super::COMPLETED
             } else {
-                super::GENERATING
+                0
             },
             std::sync::atomic::Ordering::Relaxed,
         );

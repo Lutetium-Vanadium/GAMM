@@ -6,8 +6,6 @@ use std::{
     },
 };
 
-#[cfg(feature = "group")]
-use crossbeam_queue::ArrayQueue;
 use na::RawStorage;
 use nalgebra as na;
 
@@ -202,10 +200,6 @@ where
         let barrier = Barrier::new(t);
         let counter = AtomicUsize::new(0);
 
-        // For a n columns, there is a maximum of n/2 independent rotations that can occur.
-        #[cfg(feature = "group")]
-        let rotations_queue = ArrayQueue::new(n / 2);
-
         let worker_args = WorkerArgs {
             n,
             npivots,
@@ -219,8 +213,6 @@ where
             shape: (n_generic, m_generic),
             barrier: &barrier,
             counter: &counter,
-            #[cfg(feature = "group")]
-            rotations_queue: &rotations_queue,
         };
 
         std::thread::scope(move |s| {
@@ -288,9 +280,6 @@ struct WorkerArgs<'b, D> {
     shape: (D, D),
     barrier: &'b Barrier,
     counter: &'b AtomicUsize,
-    /// (index, element of p)
-    #[cfg(feature = "group")]
-    rotations_queue: &'b ArrayQueue<(usize, (usize, usize, Float))>,
 }
 
 // SAFETY: the pointers are aliased, however, it is only mutably accessed in a non-aliasing way
@@ -298,7 +287,6 @@ unsafe impl<'b, D: Send> Send for WorkerArgs<'b, D> {}
 
 const MAIN_WORKER: usize = 0;
 const COMPLETED: usize = usize::MAX;
-const GENERATING: usize = usize::MAX - 1;
 
 fn assert_copy<T: Copy>() {}
 /// # Safety
@@ -347,31 +335,21 @@ where
 
         #[cfg(feature = "group")]
         {
-            // SAFETY: There were npivots >= npivots_rotated column-pairs generated in phase 1. So
-            // there are enough initialised elements
-            let mut main_worker_data = (worker_id == MAIN_WORKER).then(|| unsafe {
-                (
-                    std::slice::from_raw_parts_mut(args.p.as_ptr(), args.npivots_rotated),
-                    // used: Vec -- each element represents column i being used in group used[i]
-                    vec![usize::MAX; args.n],
-                )
-            });
+            // used: Vec -- each element represents column i being used in group used[i]
+            let mut main_worker_data = (worker_id == MAIN_WORKER).then(|| vec![usize::MAX; args.n]);
+            let mut npivots_processed = 0;
 
             for group_number in 0.. {
-                // pre phase 2 check if main worker set completed last time round
-                if args.counter.load(atomic::Ordering::SeqCst) == COMPLETED {
-                    break;
-                }
-
                 // ============  PHASE 2  ============
                 // Generate rotations for the column-pairs in this group (in parallel).
-                let q_len = unsafe {
+                let group_size = unsafe {
                     jts_group_worker_phase_2(
                         worker_id,
                         t,
                         &args,
-                        main_worker_data.as_mut(),
+                        main_worker_data.as_deref_mut(),
                         group_number,
+                        npivots_processed,
                     )
                 };
                 // ===================================
@@ -380,17 +358,14 @@ where
 
                 // ============  PHASE 3  ============
                 // Apply Jacobi rotations in parallel
-
-                unsafe { jts_group_worker_phase_3(worker_id, t, &args, q_len) }
-
+                unsafe { jts_group_worker_phase_3(worker_id, t, &args, group_size) }
                 // ===================================
 
-                // post phase-3 for main worker -- perform before barrier so that
-                if let Some((p, _)) = main_worker_data.as_mut() {
-                    args.counter.store(
-                        if p.is_empty() { COMPLETED } else { GENERATING },
-                        atomic::Ordering::SeqCst,
-                    );
+                npivots_processed += group_size;
+
+                // post phase-3 -- check if all the pivots have been rotated
+                if npivots_processed == args.npivots_rotated {
+                    break;
                 }
 
                 args.barrier.wait(); // Wait for all threads to finish this group
