@@ -4,6 +4,7 @@ pub mod baseline_single;
 pub mod basic_multi;
 pub mod common;
 pub mod config;
+pub mod jts_multi;
 pub mod self_svd_single;
 pub mod svd;
 

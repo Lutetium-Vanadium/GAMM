@@ -1,4 +1,4 @@
-use gamm::{baseline_single, basic_multi, common, self_svd_single};
+use gamm::{baseline_single, basic_multi, common, jts_multi, self_svd_single};
 use std::time::Duration;
 
 use nalgebra as na;
@@ -20,9 +20,14 @@ fn main() {
         "self svd single",
     );
 
-    let (z_amm_multi, t_amm_multi) = gamm::measure_time(
+    let (z_amm_libsvd_multi, t_amm_libsvd_multi) = gamm::measure_time(
         || basic_multi::beta_coocurring_amm(&x, &y, &config),
-        "multi",
+        "lib svd multi",
+    );
+
+    let (z_amm_selfsvd_multi, t_amm_selfsvd_multi) = gamm::measure_time(
+        || jts_multi::beta_coocurring_amm(&x, &y, &config),
+        "self svd multi",
     );
 
     let loops_res = measure_loop_mm.then(|| {
@@ -58,11 +63,19 @@ fn main() {
         "z_amm_single(self svd): {}",
         z_amm_selfsvd_single.fixed_slice::<2, 2>(0, 0)
     );
-    println!("z_amm_multi: {}", z_amm_multi.fixed_slice::<2, 2>(0, 0));
+    println!(
+        "z_amm_multi(lib svd): {}",
+        z_amm_libsvd_multi.fixed_slice::<2, 2>(0, 0)
+    );
+    println!(
+        "z_amm_multi(self svd): {}",
+        z_amm_selfsvd_multi.fixed_slice::<2, 2>(0, 0)
+    );
 
-    let e_amm_baseline_single = common::find_l2_norm(z.clone() - &z_amm_baseline_single);
-    let e_amm_selfsvd_single = common::find_l2_norm(z.clone() - &z_amm_selfsvd_single);
-    let e_amm_multi = common::find_l2_norm(z - &z_amm_multi);
+    let e_amm_baseline_single = common::find_l2_norm(&z - z_amm_baseline_single);
+    let e_amm_selfsvd_single = common::find_l2_norm(&z - z_amm_selfsvd_single);
+    let e_amm_libsvd_multi = common::find_l2_norm(&z - z_amm_libsvd_multi);
+    let e_amm_selfsvd_multi = common::find_l2_norm(&z - z_amm_selfsvd_multi);
 
     if measure_loop_mm {
         println!("Loop-MM -- {:?}", t_loops);
@@ -78,7 +91,11 @@ fn main() {
         e_amm_selfsvd_single, t_amm_selfsvd_single
     );
     println!(
-        "B-Coocurring-AMM (multi; {}):\t\tError {}; Time taken {:?}",
-        config.t, e_amm_multi, t_amm_multi
+        "B-Coocurring-AMM (multi lib svd; {}):\t\tError {}; Time taken {:?}",
+        config.t, e_amm_libsvd_multi, t_amm_libsvd_multi
+    );
+    println!(
+        "B-Coocurring-AMM (multi self svd; {}):\t\tError {}; Time taken {:?}",
+        config.t, e_amm_selfsvd_multi, t_amm_selfsvd_multi
     );
 }

@@ -26,8 +26,14 @@ pub(super) unsafe fn jts_group_worker_phase_1<D: na::Dim>(
         // The pointer is also valid for n*n matrix (guaranteed by the caller)
         let b_slice = unsafe { std::slice::from_raw_parts(args.b.as_ptr(), n * n) };
         let b = na::MatrixSlice::from_slice_generic(b_slice, args.shape.0, args.shape.1);
-        for j in (worker_id..(n - 1)).step_by(t) {
-            for k in (j + 1)..n {
+
+        for j1 in (worker_id..(n / 2)).step_by(t) {
+            let k1 = (j1 + 1)..n;
+
+            let j2 = n - j - 1 - (n % 2);
+            let k2 = (j2 + 1)..n;
+
+            for (j, k) in k1.map(|k| (j1, k)).chain(k2.map(|k| (j2, k))) {
                 // SAFETY: caller guarantees p points to a pre-allocated buffer which is writeable.
                 // Each index here is unique and so writing to it in parallel is ok.
                 unsafe {
