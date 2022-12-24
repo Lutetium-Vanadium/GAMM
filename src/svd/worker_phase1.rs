@@ -30,7 +30,7 @@ pub(super) unsafe fn jts_group_worker_phase_1<D: na::Dim>(
         for j1 in (worker_id..(n / 2)).step_by(t) {
             let k1 = (j1 + 1)..n;
 
-            let j2 = n - j - 1 - (n % 2);
+            let j2 = n - j1 - 1 - (n % 2);
             let k2 = (j2 + 1)..n;
 
             for (j, k) in k1.map(|k| (j1, k)).chain(k2.map(|k| (j2, k))) {
