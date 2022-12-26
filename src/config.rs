@@ -14,6 +14,7 @@ struct ConfigOptional {
     l: Option<usize>,
     beta: Option<f32>,
     t: Option<usize>,
+    bin: Option<String>,
 }
 
 #[derive(Debug)]
@@ -23,6 +24,7 @@ pub struct Config {
     pub l: usize,
     pub beta: f32,
     pub t: usize,
+    pub bin: Option<String>,
 }
 
 impl Default for Config {
@@ -43,6 +45,7 @@ impl Config {
             l: optional.l.unwrap_or(400),
             beta: optional.beta.unwrap_or(28.0),
             t: optional.t.unwrap_or_else(common::hardware_concurrency),
+            bin: optional.bin,
         }
     }
 

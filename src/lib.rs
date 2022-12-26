@@ -1,9 +1,10 @@
-#![feature(slice_take)]
+#![feature(slice_take, io_error_other)]
 
 pub mod baseline_single;
 pub mod basic_multi;
 pub mod common;
 pub mod config;
+pub mod energy_meter;
 pub mod jts_multi;
 pub mod self_svd_single;
 pub mod svd;
