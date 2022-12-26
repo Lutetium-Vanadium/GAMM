@@ -2,7 +2,7 @@ use std::{
     ptr::NonNull,
     sync::{
         atomic::{self, AtomicUsize},
-        Barrier,
+        Barrier, Mutex,
     },
 };
 
@@ -190,29 +190,46 @@ where
         let mut v = na::OMatrix::identity_generic(n_generic, m_generic);
         let mut b = matrix;
 
-        let npivots = n * (n - 1) / 2;
-        let npivots_rotated = npivots / tau;
+        let ncolumn_pairs = n * (n - 1) / 2;
+        let npivots = ncolumn_pairs / tau;
 
-        let mut p = Vec::with_capacity(npivots);
-        // Paper uses a queue, but the `q.drain(..)` will give the same effect
-        let mut q = Vec::with_capacity(npivots_rotated);
+        let mut p1 = Vec::with_capacity(ncolumn_pairs);
+        let mut p2 = Vec::with_capacity(ncolumn_pairs);
+
+        let p1_ptr = NonNull::new(p1.as_mut_ptr()).expect("p1 is allocated");
+        let p2_ptr = NonNull::new(p2.as_mut_ptr()).expect("p2 is allocated");
+
+        // Get the correct pointer containing the final fully sorted column-pairs based on the
+        // number of levels in the parallel merging stage of sort in phase 1.
+        let p = if t.next_power_of_two().trailing_ones() % 2 == 0 {
+            p1_ptr
+        } else {
+            p2_ptr
+        };
+
+        // Paper uses a queue, but the slice partitioning will give the same effect
+        let mut q = Vec::with_capacity(npivots);
 
         let barrier = Barrier::new(t);
         let counter = AtomicUsize::new(0);
 
+        let sort_locks: Vec<_> = (0..t).map(|_| Mutex::new(0)).collect();
+
         let worker_args = WorkerArgs {
             n,
             npivots,
-            npivots_rotated,
             max_sweeps,
             delta,
             b: NonNull::new(b.as_mut_ptr()).expect("b is not empty"),
             v: NonNull::new(v.as_mut_ptr()).expect("v is not empty"),
-            p: NonNull::new(p.as_mut_ptr()).expect("p is allocated"),
+            p1: p1_ptr,
+            p2: p2_ptr,
+            p,
             q: NonNull::new(q.as_mut_ptr()).expect("q is allocated"),
             shape: (n_generic, m_generic),
             barrier: &barrier,
             counter: &counter,
+            sort_locks: &sort_locks,
         };
 
         std::thread::scope(move |s| {
@@ -221,17 +238,17 @@ where
                     let cloned = worker_args.clone();
                     // SAFETY
                     //
-                    // - `npivots = n*(n-1)/2`
-                    // - `npivots_rotated <= npivots`
+                    // - `npivots <= n choose 2`
                     // - `b` points to a valid writeable `n*n` matrix buffer
                     // - `v` points to a valid writeable `n*n` matrix buffer
-                    // - `p` points to a valid writeable `npivots` `Vec` buffer
-                    // - `q` points to a valid writeable `npivots_rotated` `Vec` buffer
-                    // - `p_capacity` is the capacity of the `q` `Vec`.
+                    // - `p1` points to a valid writeable `n choose 2` `Vec` buffer
+                    // - `p2` points to a valid writeable `n choose 2` `Vec` buffer
+                    // - `p` points to either p1 or p2, based on log2(t.next_power_of_two()) % 2
+                    // - `q` points to a valid writeable `npivots` `Vec` buffer
                     // - `shape = (n, n)`
                     // - `barrier` is not waited on by any other threads, only threads running this
                     //   function
-                    // - `completed` is not wrote to by any other threads, only threads running this
+                    // - `counter` is not wrote to by any other threads, only threads running this
                     //   function
                     // - `worker_id` is unique to all currently running `jts_group_worker`s and `t`
                     //   is the number of workers
@@ -269,17 +286,19 @@ where
 struct WorkerArgs<'b, D> {
     n: usize,
     npivots: usize,
-    npivots_rotated: usize,
     max_sweeps: usize,
     delta: Float,
     b: NonNull<Float>,
     v: NonNull<Float>,
     /// (j, k, b_j.dot(b_k))
+    p1: NonNull<(usize, usize, Float)>,
+    p2: NonNull<(usize, usize, Float)>,
     p: NonNull<(usize, usize, Float)>,
     q: NonNull<JacobiRotation>,
     shape: (D, D),
     barrier: &'b Barrier,
     counter: &'b AtomicUsize,
+    sort_locks: &'b [Mutex<usize>],
 }
 
 // SAFETY: the pointers are aliased, however, it is only mutably accessed in a non-aliasing way
@@ -292,16 +311,16 @@ fn assert_copy<T: Copy>() {}
 /// # Safety
 ///
 /// The caller must guarantee the following:
-/// - `npivots = n*(n-1)/2`
-/// - `npivots_rotated <= npivots`
+/// - `npivots <= n choose 2`
 /// - `b` points to a valid writeable `n*n` matrix buffer
 /// - `v` points to a valid writeable `n*n` matrix buffer
-/// - `p` points to a valid writeable `npivots` `Vec` buffer
-/// - `q` points to a valid writeable `npivots_rotated` `Vec` buffer
-/// - `p_capacity` is the capacity of the `p` `Vec`.
+/// - `p1` points to a valid writeable `n choose 2` `Vec` buffer
+/// - `p2` points to a valid writeable `n choose 2` `Vec` buffer
+/// - `p` points to either p1 or p2, based on log2(t.next_power_of_two()) % 2
+/// - `q` points to a valid writeable `npivots` `Vec` buffer
 /// - `shape = (n, n)`
 /// - `barrier` is not waited on by any other threads, only threads running this function
-/// - `completed` is not wrote to by any other threads, only threads running this function
+/// - `counter` is not wrote to by any other threads, only threads running this function
 /// - `worker_id` is unique to all currently running `jts_group_worker`s and `t` is the number of
 ///   workers
 unsafe fn jts_group_worker<D: na::Dim>(worker_id: usize, t: usize, args: WorkerArgs<'_, D>)
@@ -315,6 +334,7 @@ where
     // being copy
     assert_copy::<(usize, usize, Float)>();
     assert_copy::<JacobiRotation>();
+    assert_eq!(args.sort_locks.len(), t);
 
     let mut c = args.max_sweeps;
 
@@ -364,7 +384,7 @@ where
                 npivots_processed += group_size;
 
                 // post phase-3 -- check if all the pivots have been rotated
-                if npivots_processed == args.npivots_rotated {
+                if npivots_processed == args.npivots {
                     break;
                 }
 

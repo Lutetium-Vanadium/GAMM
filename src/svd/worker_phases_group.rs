@@ -27,15 +27,12 @@ where
     // MAIN_WORKER generates the column-pairs of this group
 
     if let Some(used) = main_worker_data {
-        // SAFETY: There were npivots >= npivots_rotated column-pairs generated in phase 1. So
-        // there are enough initialised elements.
+        // SAFETY: There were npivots column-pairs generated in phase 1. So there are enough
+        // initialised elements.
         //
         // Also, in phase 2.1, only the MAIN_WORKER is active
         let p = unsafe {
-            std::slice::from_raw_parts_mut(
-                args.p.as_ptr(),
-                args.npivots_rotated - npivots_processed,
-            )
+            std::slice::from_raw_parts_mut(args.p.as_ptr(), args.npivots - npivots_processed)
         };
 
         let partition_point = crate::common::partition(p, |&(j, k, _)| {
@@ -73,12 +70,12 @@ where
     // SAFETY: all worker threads are in phase 2.2. Here p is read-only, so casting the p pointer to
     // a MatrixSlice is ok.
     //
-    // The pointer is also valid for npivtos >= npivots_rotated >= npivots_processed + group_size
+    // The pointer is also valid for n choose 2 >= npivots >= npivots_processed + group_size
     // elements
     //
     // Format of p:
     //
-    //      |--------------- npivots_rotated ----------------|
+    //      |------------------- npivots --------------------|
     // p = [<unprocessed>, <current group>, <previous groups> ]
     //                     |------.------|  |-------.--------|
     //               group_size --'                 '-- npivots_processed
@@ -86,16 +83,16 @@ where
         std::slice::from_raw_parts(
             args.p
                 .as_ptr()
-                .add(args.npivots_rotated - npivots_processed - group_size),
+                .add(args.npivots - npivots_processed - group_size),
             group_size,
         )
     };
 
     for i in (worker_id..group_size).step_by(t) {
         let (j, k, d) = p[i];
-        // SAFETY: Every i is unique amongst the threads and i < npivots_rotated
+        // SAFETY: Every i is unique amongst the threads and i < npivots
         //
-        // The caller has guaranteed that q has a capacity of at least npivots_rotated >= group_size
+        // The caller has guaranteed that q has a capacity of at least npivots >= group_size
         unsafe {
             args.q
                 .as_ptr()

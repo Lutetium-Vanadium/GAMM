@@ -24,11 +24,11 @@ pub(super) unsafe fn jts_group_worker_phase_2<D: na::Dim>(
     let b_slice = unsafe { std::slice::from_raw_parts(args.b.as_ptr(), n * n) };
     let b = na::MatrixSlice::from_slice_generic(b_slice, args.shape.0, args.shape.1);
 
-    for i in (worker_id..args.npivots_rotated).step_by(t) {
+    for i in (worker_id..args.npivots).step_by(t) {
         // SAFETY: Every i is unique amongst the threads.
         //
-        // The caller has guaranteed that q has at least npivots_rotated elements and p has at least
-        // npivots >= npivots_rotated elements.
+        // The caller has guaranteed that q has at least npivots elements and p has at least
+        // n choose 2 >= npivots elements.
         unsafe {
             let (j, k, d) = args.p.as_ptr().add(i).read();
             args.q
@@ -56,7 +56,7 @@ pub(super) unsafe fn jts_group_worker_phase_3<D: na::Dim>(
     if worker_id == super::MAIN_WORKER {
         // SAFETY: only the main worker executes this code. So we have exclusive access to all
         // structures here.
-        let q = unsafe { std::slice::from_raw_parts(args.q.as_ptr(), args.npivots_rotated) };
+        let q = unsafe { std::slice::from_raw_parts(args.q.as_ptr(), args.npivots) };
 
         let b_slice = unsafe { std::slice::from_raw_parts_mut(args.b.as_ptr(), n * n) };
         let mut b = na::MatrixSliceMut::from_slice_generic(b_slice, args.shape.0, args.shape.1);
