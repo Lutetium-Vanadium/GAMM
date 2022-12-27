@@ -239,7 +239,7 @@ fn beta_coocurring_reduction(
             };
 
             for i in 0..sv.len() {
-                if common::is_zero(sv[i].) {
+                if common::is_zero(sv[i]) {
                     zeroed_cols.set_zeroed(i);
                 }
                 u.column_mut(i).scale_mut(sv[i]);

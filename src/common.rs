@@ -28,8 +28,8 @@ impl ZeroedColumns {
         }
     }
 
-    pub fn new_from_matrix<T: Zero, R: na::Dim, C: na::Dim, S: na::Storage<T, R, C>>(
-        matrix: &na::Matrix<T, R, C, S>,
+    pub fn new_from_matrix<R: na::Dim, C: na::Dim, S: na::Storage<Float, R, C>>(
+        matrix: &na::Matrix<Float, R, C, S>,
     ) -> Self {
         let n = matrix.ncols();
         let mut this = Self::new_no_zeroed(n);
