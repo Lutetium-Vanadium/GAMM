@@ -201,7 +201,7 @@ where
 
         // Get the correct pointer containing the final fully sorted column-pairs based on the
         // number of levels in the parallel merging stage of sort in phase 1.
-        let p = if t.next_power_of_two().trailing_ones() % 2 == 0 {
+        let p = if t.next_power_of_two().trailing_zeros() % 2 == 0 {
             p1_ptr
         } else {
             p2_ptr
