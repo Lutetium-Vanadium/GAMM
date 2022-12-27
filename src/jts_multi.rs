@@ -1,7 +1,6 @@
 use std::sync::{Barrier, Mutex};
 
 use nalgebra as na;
-use num_traits::Zero;
 
 use crate::{
     common::{self, Float, ZeroedColumns},
@@ -191,11 +190,11 @@ fn beta_coocurring_reduction(
     let x_iter = x
         .column_iter()
         .enumerate()
-        .filter(|(_, c)| !c.iter().all(|e| e.is_zero()));
+        .filter(|(_, c)| !c.iter().copied().all(common::is_zero));
     let y_iter = y
         .column_iter()
         .enumerate()
-        .filter(|(_, c)| !c.iter().all(|e| e.is_zero()));
+        .filter(|(_, c)| !c.iter().copied().all(common::is_zero));
 
     // First l columns have already been copied, so we start from i=l instead
     for ((x_i, x_col), (y_i, y_col)) in x_iter.zip(y_iter) {
@@ -232,7 +231,7 @@ fn beta_coocurring_reduction(
             parameterized_reduce_rank(&mut sv, attenuate_vec);
 
             for i in 0..sv.len() {
-                if sv[i].is_zero() {
+                if common::is_zero(sv[i]) {
                     zeroed_cols.set_zeroed(i);
                 }
                 u.column_mut(i).scale_mut(sv[i]);

@@ -1,5 +1,4 @@
 use nalgebra as na;
-use num_traits::Zero;
 
 use crate::{
     common::{self, Float, ZeroedColumns},
@@ -71,8 +70,10 @@ pub fn beta_coocurring_amm(
                 v_t
             };
 
-            let check_no_zero_cols =
-                |m: &na::DMatrix<Float>| m.column_iter().all(|c| !c.iter().all(|x| x.is_zero()));
+            let check_no_zero_cols = |m: &na::DMatrix<Float>| {
+                m.column_iter()
+                    .all(|c| !c.iter().copied().all(common::is_zero))
+            };
             // The following matrices are orthogonal, so they shouldn't have any zero columns
             // This fact is used to optimize zero column finding by keeping track of zero columns
             // using the svd
@@ -82,7 +83,7 @@ pub fn beta_coocurring_amm(
             debug_assert!(check_no_zero_cols(&qy));
 
             for i in 0..sv.len() {
-                if sv[i].is_zero() {
+                if common::is_zero(sv[i]) {
                     zeroed_cols.set_zeroed(i);
                 }
                 u.column_mut(i).scale_mut(sv[i]);

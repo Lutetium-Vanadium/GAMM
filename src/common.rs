@@ -1,5 +1,4 @@
 use nalgebra as na;
-use num_traits::Zero;
 
 pub type Float = f32;
 
@@ -36,7 +35,7 @@ impl ZeroedColumns {
         let mut this = Self::new_no_zeroed(n);
 
         for (i, c) in matrix.column_iter().enumerate() {
-            if c.iter().all(|x| x.is_zero()) {
+            if c.iter().copied().all(is_zero) {
                 this.set_zeroed(i);
             }
         }
@@ -73,7 +72,7 @@ impl ZeroedColumns {
 
         for (i, c) in m.column_iter().enumerate() {
             assert_eq!(
-                c.iter().all(|x| x.is_zero()),
+                c.iter().copied().all(is_zero),
                 self.next_zeroed[i] != Self::NON_ZERO,
                 "column {}",
                 i
@@ -142,4 +141,13 @@ pub fn partition<T, P: FnMut(&T) -> bool>(slice: &mut [T], mut predicate: P) -> 
     }
 
     parition_point
+}
+
+/// Returns if `a` is close to `b`
+pub fn close_to(a: Float, b: Float) -> bool {
+    (a - b).abs() < Float::EPSILON
+}
+
+pub fn is_zero(a: Float) -> bool {
+    close_to(a, 0.0)
 }
