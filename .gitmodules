@@ -1,3 +1,0 @@
-[submodule "baseline/eigen"]
-	path = baseline/eigen
-	url = https://gitlab.com/libeigen/eigen
