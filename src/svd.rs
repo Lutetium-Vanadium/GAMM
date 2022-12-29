@@ -1,4 +1,5 @@
 use std::{
+    cmp,
     ptr::NonNull,
     sync::{
         atomic::{self, AtomicUsize},
@@ -131,9 +132,7 @@ where
             // well.
 
             // Sort by descending order of dot-products
-            p.sort_unstable_by(|(_, _, a), (_, _, b)| {
-                b.partial_cmp(&a).expect("Singular value was NaN")
-            });
+            p.sort_unstable_by(column_pair_cmp);
 
             p.truncate(npivots_rotated);
 
@@ -418,4 +417,10 @@ where
             args.counter.store(c, atomic::Ordering::Relaxed);
         }
     }
+}
+
+fn column_pair_cmp(a: &(usize, usize, Float), b: &(usize, usize, Float)) -> cmp::Ordering {
+    b.2.abs()
+        .partial_cmp(&a.2.abs())
+        .expect("Dot product was NaN")
 }

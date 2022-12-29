@@ -61,7 +61,7 @@ pub(super) unsafe fn jts_group_worker_phase_1<D: na::Dim>(
         let p = unsafe { std::slice::from_raw_parts_mut(args.p1.as_ptr().add(start_i), nelements) };
 
         // Sort by descending order of dot-products
-        p.sort_unstable_by(column_pair_cmp);
+        p.sort_unstable_by(super::column_pair_cmp);
     }
 
     let mut sort_lock = args.sort_locks[worker_id]
@@ -95,7 +95,7 @@ pub(super) unsafe fn jts_group_worker_phase_1<D: na::Dim>(
         unsafe {
             let this_cur = std::slice::from_raw_parts(p_cur, *sort_lock);
             let other_cur = std::slice::from_raw_parts(p_cur.add(*sort_lock), *other_lock);
-            merge(this_cur, other_cur, p_merge_to, column_pair_cmp);
+            merge(this_cur, other_cur, p_merge_to, super::column_pair_cmp);
         }
 
         std::mem::swap(&mut p_cur, &mut p_merge_to);
@@ -117,10 +117,6 @@ pub(super) unsafe fn jts_group_worker_phase_1<D: na::Dim>(
             std::sync::atomic::Ordering::Relaxed,
         );
     }
-}
-
-fn column_pair_cmp(a: &(usize, usize, Float), b: &(usize, usize, Float)) -> cmp::Ordering {
-    b.2.partial_cmp(&a.2).expect("Dot product was NaN")
 }
 
 /// # Safety
