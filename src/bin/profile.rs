@@ -19,19 +19,21 @@ fn main() {
     energy_meter
         .start_sampling()
         .expect("Energy meter couldn't have already started sampling");
-    let (mat, time) = gamm::measure_time(|| f(&x, &y, &config), name);
+    let (z_amm, time) = gamm::measure_time(|| f(&x, &y, &config), name);
     energy_meter.stop_sampling().expect("Energy meter failed");
 
-    std::hint::black_box(mat);
+    let z_actual = x * y.transpose();
+    let err = gamm::common::find_l2_norm(z_actual - z_amm);
 
     // Uncomment this line to store more detailed energy readings.
     // energy_meter.write_csv("energy_consumed.csv").expect("Energy meter failed");
 
     println!(
-        "Time: {:?}; Energy: {} J",
+        "Time: {:?}; Energy: {} J; Error: {}",
         time,
         energy_meter
             .energy_consumed()
-            .expect("Energy meter sampling has been stopped")
+            .expect("Energy meter sampling has been stopped"),
+        err
     )
 }

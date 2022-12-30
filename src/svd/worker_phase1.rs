@@ -43,14 +43,11 @@ pub(super) unsafe fn jts_group_worker_phase_1<D: na::Dim>(
             let k2 = (j2 + 1)..n;
 
             for (j, k) in k1.map(|k| (j1, k)).chain(k2.map(|k| (j2, k))) {
+                let d = b.column(j).dot(&b.column(k));
+
                 // SAFETY: caller guarantees p1 points to a pre-allocated buffer which is writeable.
                 // Each index here is unique and so writing to it in parallel is ok.
-                unsafe {
-                    args.p1
-                        .as_ptr()
-                        .add(i)
-                        .write((j, k, b.column(j).dot(&b.column(k))))
-                };
+                unsafe { args.p1.as_ptr().add(i).write((j, k, d)) };
 
                 i += 1;
             }

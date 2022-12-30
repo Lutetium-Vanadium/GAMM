@@ -19,6 +19,10 @@ pub fn beta_coocurring_amm(
     assert_eq!(d1, d2);
     let d = d1;
 
+    if t * l > d {
+        return na::DMatrix::zeros(m1, m2);
+    }
+
     let sub_col_size_base = d / t;
     let extra = d % t;
 
@@ -226,7 +230,7 @@ fn beta_coocurring_reduction(
                 mut u,
                 mut v,
                 mut sv,
-            } = svd::Svd::jts_seq(rx, 1e-7, 32, 100);
+            } = svd::Svd::jts_seq(rx, svd::TOL, svd::TAU, svd::MAX_SWEEPS);
 
             parameterized_reduce_rank(&mut sv, attenuate_vec);
 

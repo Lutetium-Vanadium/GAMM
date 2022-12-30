@@ -19,6 +19,10 @@ pub fn beta_coocurring_amm(
     assert_eq!(d1, d2);
     let d = d1;
 
+    if t * l > d {
+        return na::DMatrix::zeros(m1, m2);
+    }
+
     let sub_col_size_base = d / t;
     let extra = d % t;
 

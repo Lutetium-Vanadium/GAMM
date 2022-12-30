@@ -26,6 +26,10 @@ use worker_phases_group::{jts_group_worker_phase_2, jts_group_worker_phase_3};
 #[cfg(not(feature = "group"))]
 use worker_phases_simple_par::{jts_group_worker_phase_2, jts_group_worker_phase_3};
 
+pub const TAU: usize = 32;
+pub const MAX_SWEEPS: usize = 100;
+pub const TOL: Float = 1e-7;
+
 pub struct Svd<D: na::Dim>
 where
     na::DefaultAllocator: na::allocator::Allocator<Float, D, D>,
@@ -122,7 +126,8 @@ where
         for i in 0..max_sweeps {
             for j in 0..(n - 1) {
                 for k in (j + 1)..n {
-                    p.push((j, k, b.column(j).dot(&b.column(k))));
+                    let d = b.column(j).dot(&b.column(k));
+                    p.push((j, k, d));
                 }
             }
 
@@ -420,7 +425,5 @@ where
 }
 
 fn column_pair_cmp(a: &(usize, usize, Float), b: &(usize, usize, Float)) -> cmp::Ordering {
-    b.2.abs()
-        .partial_cmp(&a.2.abs())
-        .expect("Dot product was NaN")
+    b.2.partial_cmp(&a.2).expect("Dot product was NaN")
 }

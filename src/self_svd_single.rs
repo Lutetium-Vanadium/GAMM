@@ -59,9 +59,9 @@ pub fn beta_coocurring_amm(
                 mut v,
                 mut sv,
             } = if cfg!(feature = "par-svd") {
-                svd::Svd::jts_par(rx, 1e-7, 32, 100, config.t)
+                svd::Svd::jts_par(rx, svd::TOL, svd::TAU, svd::MAX_SWEEPS, config.t)
             } else {
-                svd::Svd::jts_seq(rx, 1e-7, 32, 100)
+                svd::Svd::jts_seq(rx, svd::TOL, svd::TAU, svd::MAX_SWEEPS)
             };
 
             parameterized_reduce_rank(&mut sv, &attenuate_vec);
