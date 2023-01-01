@@ -51,10 +51,23 @@ fn main() {
 
     println!("{} -- {:?}", err_baseline_name, time);
 
+    // Get max-width of all the names, so that the names can nicely be aligned in the output
+    let max_width = functions
+        .iter()
+        .map(|(name, _)| name.len())
+        .max()
+        .unwrap_or(0);
+
     for (name, f) in functions {
         let (z, time) = gamm::measure_time(|| f(&x, &y, &config));
         let err = common::find_l2_norm(&z_expected - z);
 
-        println!("{}:\tError {}; Time taken {:?}", name, err, time);
+        println!(
+            "{:>width$}:  Error {:.4};  Time taken {:?}",
+            name,
+            err,
+            time,
+            width = max_width
+        );
     }
 }
