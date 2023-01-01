@@ -1,12 +1,12 @@
 #![feature(slice_take, io_error_other)]
 
-pub mod baseline_single;
-pub mod basic_multi;
 pub mod common;
 pub mod config;
 pub mod energy_meter;
-pub mod jts_multi;
-pub mod self_svd_single;
+pub mod inter;
+pub mod intra;
+pub mod libsvd;
+pub mod single;
 pub mod svd;
 
 use std::{
@@ -17,11 +17,16 @@ use std::{
 
 use nalgebra as na;
 
-pub fn measure_time<T>(f: impl FnOnce() -> T, name: &str) -> (T, time::Duration) {
+pub type AmmFn = fn(
+    &na::DMatrix<common::Float>,
+    &na::DMatrix<common::Float>,
+    &config::Config,
+) -> na::DMatrix<common::Float>;
+
+pub fn measure_time<T>(f: impl FnOnce() -> T) -> (T, time::Duration) {
     let start = time::Instant::now();
     let res = f();
     let duration = start.elapsed();
-    println!("Finished {}", name);
     (res, duration)
 }
 

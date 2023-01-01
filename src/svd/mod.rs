@@ -256,7 +256,7 @@ where
                     //   function
                     // - `worker_id` is unique to all currently running `jts_group_worker`s and `t`
                     //   is the number of workers
-                    s.spawn(move || unsafe { jts_group_worker(i, t, cloned) })
+                    s.spawn(move || unsafe { jts_parallel_worker(i, t, cloned) })
                 })
                 .collect();
 
@@ -327,7 +327,7 @@ fn assert_copy<T: Copy>() {}
 /// - `counter` is not wrote to by any other threads, only threads running this function
 /// - `worker_id` is unique to all currently running `jts_group_worker`s and `t` is the number of
 ///   workers
-unsafe fn jts_group_worker<D: na::Dim>(worker_id: usize, t: usize, args: WorkerArgs<'_, D>)
+unsafe fn jts_parallel_worker<D: na::Dim>(worker_id: usize, t: usize, args: WorkerArgs<'_, D>)
 where
     na::DefaultAllocator: na::allocator::Allocator<Float, D, D>,
     na::DefaultAllocator: na::allocator::Allocator<Float, D>,

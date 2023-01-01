@@ -1,15 +1,10 @@
-use gamm::{common::Float, config};
-use nalgebra as na;
-
-type AmmFn = fn(&na::DMatrix<Float>, &na::DMatrix<Float>, &config::Config) -> na::DMatrix<Float>;
-
 fn main() {
     let config = gamm::get_config();
     let (x, y) = gamm::load_matrices(&config).expect("Couldn't load matrices");
 
     let (name, f) = match config.bin.as_deref() {
-        Some("intra") => ("intra", gamm::self_svd_single::beta_coocurring_amm as AmmFn),
-        Some("inter") => ("inter", gamm::jts_multi::beta_coocurring_amm as AmmFn),
+        Some("intra") => ("intra", gamm::intra::beta_coocurring_amm as gamm::AmmFn),
+        Some("inter") => ("inter", gamm::inter::beta_coocurring_amm as gamm::AmmFn),
         _ => panic!("Invalid amm ({:?}) set to be profiled", config.bin),
     };
 
@@ -19,7 +14,7 @@ fn main() {
     energy_meter
         .start_sampling()
         .expect("Energy meter couldn't have already started sampling");
-    let (z_amm, time) = gamm::measure_time(|| f(&x, &y, &config), name);
+    let (z_amm, time) = gamm::measure_time(|| f(&x, &y, &config));
     let energy_readings = energy_meter.stop_sampling().expect("Energy meter failed");
 
     let z_actual = x * y.transpose();
