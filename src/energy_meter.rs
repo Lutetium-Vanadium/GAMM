@@ -10,17 +10,71 @@ use std::{
     thread, time,
 };
 
+#[derive(Default)]
+pub struct EnergyReadings {
+    /// All current readings in mA
+    pub current_readings: Vec<u32>,
+    /// All voltage readings in mV
+    pub voltage_readings: Vec<u32>,
+    pub sample_interval: time::Duration,
+}
+
+impl EnergyReadings {
+    pub fn new(sample_interval: time::Duration) -> Self {
+        let mut this = Self::default();
+        this.sample_interval = sample_interval;
+        this
+    }
+
+    /// Return the cumulative energy consumed in the sampling period. If the energy meter is in use,
+    /// then `None` is returned.
+    pub fn energy_consumed(&self) -> f64 {
+        assert_eq!(self.current_readings.len(), self.voltage_readings.len());
+
+        self.voltage_readings
+            .iter()
+            .zip(self.current_readings.iter())
+            .map(|(&v, &c)| (v * c) as f64 * self.sample_interval.as_secs_f64() / 10e6)
+            .sum()
+    }
+
+    pub fn write_csv<P: AsRef<path::Path>>(&self, path: P) -> io::Result<()> {
+        assert_eq!(self.current_readings.len(), self.voltage_readings.len());
+
+        let mut file = fs::File::create(path)?;
+
+        writeln!(
+            file,
+            "Time (ms), Voltage (mV), Current (mA), Power (W), Cumulative Energy (J)"
+        )?;
+
+        let mut cumulative_energy = 0.0;
+
+        for i in 0..self.current_readings.len() {
+            let time = i * (self.sample_interval.as_millis() as usize);
+            let voltage = self.voltage_readings[i];
+            let current = self.current_readings[i];
+            let power = (voltage * current) as f64 / 10e6;
+            cumulative_energy += power * self.sample_interval.as_secs_f64();
+
+            writeln!(
+                file,
+                "{}, {}, {}, {}, {}",
+                time, voltage, current, power, cumulative_energy
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+type JEMJoinHandle = thread::JoinHandle<io::Result<(JEMConfig, EnergyReadings)>>;
+
 struct JEMConfig {
     current_fd: fs::File,
     voltage_fd: fs::File,
-    /// All current readings in mA
-    current_readings: Vec<u32>,
-    /// All voltage readings in mV
-    voltage_readings: Vec<u32>,
-    sample_every: time::Duration,
+    sample_interval: time::Duration,
 }
-
-type JEMJoinHandle = thread::JoinHandle<io::Result<JEMConfig>>;
 
 enum JEMInner {
     Config(JEMConfig),
@@ -29,6 +83,7 @@ enum JEMInner {
 }
 
 impl JEMInner {
+    /// Takes the config if it is a config. Otherwise there is no change
     fn take_config(&mut self) -> Option<JEMConfig> {
         match std::mem::replace(self, JEMInner::TempNone) {
             JEMInner::Config(config) => Some(config),
@@ -47,13 +102,6 @@ impl JEMInner {
                 *self = this;
                 None
             }
-        }
-    }
-
-    fn config(&self) -> Option<&JEMConfig> {
-        match self {
-            JEMInner::Config(config) => Some(config),
-            _ => None,
         }
     }
 }
@@ -76,11 +124,12 @@ impl Drop for JetsonEnergyMeter {
 impl JetsonEnergyMeter {
     const SYS_BASE: &'static str = "/sys/bus/i2c/drivers/ina3221/1-0040/hwmon";
 
+    /// Creates a new energy meter with 5ms sampling interval
     pub fn new() -> io::Result<Self> {
-        Self::new_sample_every(time::Duration::from_millis(5))
+        Self::with_sample_interval(time::Duration::from_millis(5))
     }
 
-    pub fn new_sample_every(sample_every: time::Duration) -> io::Result<Self> {
+    pub fn with_sample_interval(sample_interval: time::Duration) -> io::Result<Self> {
         let mut dir = fs::read_dir(Self::SYS_BASE)?;
         let fd_path = dir.next();
 
@@ -102,9 +151,7 @@ impl JetsonEnergyMeter {
             inner: JEMInner::Config(JEMConfig {
                 current_fd,
                 voltage_fd,
-                current_readings: Vec::new(),
-                voltage_readings: Vec::new(),
-                sample_every,
+                sample_interval,
             }),
             should_stop: Arc::new(AtomicBool::new(false)),
         })
@@ -123,21 +170,20 @@ impl JetsonEnergyMeter {
 
         // Make sure that should_stop has false in it
         should_stop.store(false, atomic::Ordering::Relaxed);
-        config.voltage_readings.clear();
-        config.current_readings.clear();
 
         self.inner = JEMInner::JoinHandle(std::thread::spawn(move || {
+            let mut readings = EnergyReadings::new(config.sample_interval);
             while !should_stop.load(atomic::Ordering::Relaxed) {
                 let current_reading = jem_read_value(&mut config.current_fd)?;
                 let voltage_reading = jem_read_value(&mut config.voltage_fd)?;
 
-                config.current_readings.push(current_reading);
-                config.voltage_readings.push(voltage_reading);
+                readings.current_readings.push(current_reading);
+                readings.voltage_readings.push(voltage_reading);
 
-                thread::sleep(config.sample_every);
+                thread::sleep(config.sample_interval);
             }
 
-            Ok(config)
+            Ok((config, readings))
         }));
 
         Ok(())
@@ -145,7 +191,7 @@ impl JetsonEnergyMeter {
 
     /// Stops the sampling. Returns an error if the energy meter wasn't sampling or there was an
     /// issue with stopping the energy meter.
-    pub fn stop_sampling(&mut self) -> io::Result<()> {
+    pub fn stop_sampling(&mut self) -> io::Result<EnergyReadings> {
         let h = self
             .inner
             .take_join_handle()
@@ -153,61 +199,13 @@ impl JetsonEnergyMeter {
 
         self.should_stop.store(true, atomic::Ordering::Relaxed);
 
-        self.inner = JEMInner::Config(
-            h.join()
-                .map_err(|_| io::Error::other("Energy meter panicked while sampling"))??,
-        );
-        Ok(())
-    }
+        let (inner, energy_readings) = h
+            .join()
+            .map_err(|_| io::Error::other("Energy meter panicked while sampling"))??;
 
-    /// Return the cumulative energy consumed in the sampling period. If the energy meter is in use,
-    /// then `None` is returned.
-    pub fn energy_consumed(&self) -> Option<f64> {
-        let config = self.inner.config()?;
+        self.inner = JEMInner::Config(inner);
 
-        assert_eq!(config.current_readings.len(), config.voltage_readings.len());
-
-        Some(
-            config
-                .voltage_readings
-                .iter()
-                .zip(config.current_readings.iter())
-                .map(|(&v, &c)| (v * c) as f64 * config.sample_every.as_secs_f64() / 10e6)
-                .sum(),
-        )
-    }
-
-    pub fn write_csv<P: AsRef<path::Path>>(&self, path: P) -> io::Result<()> {
-        let config = self.inner.config().ok_or_else(|| {
-            io::Error::other("Cannot read readings while energy meter is in use.")
-        })?;
-
-        let mut file = fs::File::create(path)?;
-
-        writeln!(
-            file,
-            "Time (ms), Voltage (mV), Current (mA), Power (W), Cumulative Energy (J)"
-        )?;
-
-        assert_eq!(config.current_readings.len(), config.voltage_readings.len());
-
-        let mut cumulative_energy = 0.0;
-
-        for i in 0..config.current_readings.len() {
-            let time = i * (config.sample_every.as_millis() as usize);
-            let voltage = config.voltage_readings[i];
-            let current = config.current_readings[i];
-            let power = (voltage * current) as f64 / 10e6;
-            cumulative_energy += power * config.sample_every.as_secs_f64();
-
-            writeln!(
-                file,
-                "{}, {}, {}, {}, {}",
-                time, voltage, current, power, cumulative_energy
-            )?;
-        }
-
-        Ok(())
+        Ok(energy_readings)
     }
 }
 

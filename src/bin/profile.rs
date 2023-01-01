@@ -20,20 +20,24 @@ fn main() {
         .start_sampling()
         .expect("Energy meter couldn't have already started sampling");
     let (z_amm, time) = gamm::measure_time(|| f(&x, &y, &config), name);
-    energy_meter.stop_sampling().expect("Energy meter failed");
+    let energy_readings = energy_meter.stop_sampling().expect("Energy meter failed");
 
     let z_actual = x * y.transpose();
     let err = gamm::common::find_l2_norm(z_actual - z_amm);
 
-    // Uncomment this line to store more detailed energy readings.
-    // energy_meter.write_csv("energy_consumed.csv").expect("Energy meter failed");
+    if let Some(energy_readings_path) = std::env::var_os("WRITE_ENERGY_READINGS") {
+        println!("Writing energy readings to {:?}", energy_readings_path);
+        if let Err(e) = energy_readings.write_csv(&energy_readings_path) {
+            println!("WARNING: Failed to write detailed energy readings:");
+            println!("{}", e);
+        }
+    }
 
+    println!("{}-parallelism", name);
     println!(
         "Time: {:?}; Energy: {} J; Error: {}",
         time,
-        energy_meter
-            .energy_consumed()
-            .expect("Energy meter sampling has been stopped"),
+        energy_readings.energy_consumed(),
         err
     )
 }
