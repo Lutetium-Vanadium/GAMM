@@ -16,29 +16,21 @@ you have `git-lfs` installed.
 
 ## Running the binaries
 
-There are 5 binaries that you can run:
-
-- `gamm` -- this runs all the ways to compute the AMM and outputs the
-  error and time taken for each one of them
-
-- `single` -- this no-parallelism AMM and outputs the error and time
-  taken for each one of them
-
-- `intra` -- this intra-parallelism AMM and outputs the error and time
-  taken for each one of them
-
-- `inter` -- this inter-parallelism AMM and outputs the error and time
-  taken for each one of them
-
-- `profile` -- this runs the binary specified in the `config` with an
-  energy meter.
-
-To run a particular binary:
+To run the program:
 ```shell
-cargo r --release --bin <bin>
+cargo r --release
 ```
 
-If running the `gamm` binary, `--bin gamm` is not required.
+If no `bin` is specified in the configuration file, then all AMM
+implementations are run. Otherwise, only the implementation specified by
+`bin` will be run along the full matrix multiplication to calculate the
+error. See also [configuration](#configuration-file) for the available
+bins.
+
+The program tries to measure the energy taken by each AMM using the
+[Jetson energy meter](https://docs.nvidia.com/jetson/archives/r34.1/DeveloperGuide/text/SD/PlatformPowerAndPerformance/JetsonOrinNxSeriesAndJetsonAgxOrinSeries.html#jetson-agx-orin-series).
+If able to, the program outputs the total energy consumed by each of the
+AMMs.
 
 ## Environment Variables
 
@@ -47,25 +39,37 @@ number, that is used as the default hardware concurrency. If the
 configuration file _does not_ specify a value for `t`, then
 `HARDWARE_CONCURRENCY` will be used.
 
-When running the `gamm` binary, if the `MEASURE_LOOP_MM` environment
-variable is set, then it will also measure the time taken to perform
-full matrix multiplication using a handwritten unoptimized loop.
+If the `MEASURE_LOOP_MM` environment variable is set, then it will also
+measure the time taken to perform full matrix multiplication using a
+handwritten unoptimized loop.
 
-When running the `profile` binary, if the `WRITE_ENERGY_READINGS`
-environment variable is set, then the detailed energy readings taken by
-the energy meter will be written to the file specified by it.
+If the `ENERGY_READINGS_DIR` environment variable is set, then the
+detailed energy readings taken by the energy meter will be written to
+the directory specified by it. Each file will be located at
+`ENERGY_READINGS_DIR/<name>.csv`.
+> The program will overwrite the file if it exists. Check that old
+> readings if still required are moved to a different path.
 
 ## Configuration file
 
 The following options can be specified for the configuration file, with
 their default options:
 ```toml
+# file path of the matrices
 x = "./matrices/x.dat"
 y = "./matrices/y.dat"
+
+# Reduced column size -- integer >= 0
 l = 400
+
+# Beta value used B-AMM -- floating point number
 beta = 28.0
-t = <detected hardware concurrency>
-bin = <not set by default>
+
+# The number of threads to use -- integer > 0
+t = "<detected hardware concurrency>"
+
+# The AMM function to run when running the program -- intra/inter/single
+bin = "<not set by default>"
 ```
 
 The available options for bin are `intra`, `inter` and `single`.
@@ -73,10 +77,10 @@ The available options for bin are `intra`, `inter` and `single`.
 The configuration must be in a `.toml` file and can be passed as the
 last argument when running a binary.
 
-For example, if you want to run `profile` with the configuration given
-in `./config.toml`:
+For example, if you want to run with the configuration given in
+`./config.toml`:
 ```shell
-cargo r --release --bin profile -- ./config.toml
+cargo r --release -- ./config.toml
 ```
 > Note the `--` is needed to delimit the arguments being sent to `cargo`
 > versus the binary after it has been compiled.
@@ -84,37 +88,36 @@ cargo r --release --bin profile -- ./config.toml
 ## Structure of the project
 
 All of the main implementation is available in the `gamm` library (entry
-point is `src/lib.rs`).
-
-The binaries are available in `src/bin/` with the exception of the
-`gamm` binary which is in `src/main.rs`.
+point is [`src/lib.rs`](./src/lib.rs). The runnable program is located
+in [`src/main.rs`](./src/main.rs).
 
 Within the `gamm` library the following modules are present:
 
-- `common` -- this contains helper functions used throughout the
-  code base.
+- [`common`](./src/common.rs) -- this contains helper functions used
+  throughout the code base.
 
-- `config` -- this contains the code required for loading the
-  configuration file.
+- [`config`](./src/config.rs) -- this contains the code required for
+  loading the configuration file.
 
-- `energy_meter` -- this contains the implementation of the energy
-  meter. Currently only the `JetsonEnergyMeter` is available.
+- [`energy_meter`](./src/energy_meter.rs) -- this contains the
+  implementation of the energy meter. Currently only the
+  `JetsonEnergyMeter` is available.
  
-- `svd` -- this contains the implementation of JTS. There are three
-  implementations present:
+- [`svd`](./src/svd/mod.rs) -- this contains the implementation of JTS.
+  There are three implementations present:
   - Sequential JTS
   - Simple parallel JTS
   - Group parallel JTS
 
-- `bamm` -- this contains the implementation of the reduction part of
-  BCooccurring-AMM. It is used by `inter`, `intra` and `single` to
-  implement the different types of parallelism in the AMM.
+- [`bamm`](./src/bamm.rs) -- this contains the implementation of the
+  reduction part of BCooccurring-AMM. It is used by `inter`, `intra` and
+  `single` to implement the different types of parallelism in the AMM.
  
-- `inter`/`intra`/`single` -- these contain the approximate matrix
-  multiplication implementations for inter-parallelism,
-  intra-parallelism and no parallelism respectively. These use the JTS
-  based implementation.
+- [`inter`](./src/inter.rs)/[`intra`](./src/intra.rs)/[`single`](./src/single.rs) -- 
+  these contain the approximate matrix multiplication implementations
+  for inter-parallelism, intra-parallelism and no parallelism
+  respectively. These use the JTS based implementation.
 
-- `libsvd` -- this contains two sub-modules (`single` and `multi`) which
+- [`libsvd`](./src/libsvd) -- this contains two sub-modules (`single` and `multi`) which
   contain single-threaded and multi-threaded approximate matrix
   multiplication implementation using the `nalgebra` SVD implementation.
