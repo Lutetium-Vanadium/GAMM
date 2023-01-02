@@ -2,6 +2,9 @@ use std::sync::{Barrier, Mutex};
 
 use nalgebra as na;
 
+extern crate scoped_pool;
+use scoped_pool::Pool;
+
 use crate::{bamm, common::Float, config, svd};
 
 pub fn beta_coocurring_amm(
@@ -29,7 +32,10 @@ pub fn beta_coocurring_amm(
         .map(|_| Mutex::new((na::DMatrix::zeros(m1, l), na::DMatrix::zeros(m2, l))))
         .collect();
 
-    std::thread::scope(|s| {
+    // create a pool of t threads
+    let pool = Pool::new(t);
+
+    pool.scoped(|s| {
         let handles: Vec<_> = (0..t)
             .map(|i| {
                 let barrier_ref = &barrier;
@@ -45,7 +51,7 @@ pub fn beta_coocurring_amm(
                 let x_slice = x.columns(start_i, ncols);
                 let y_slice = y.columns(start_i, ncols);
 
-                s.spawn(move || {
+                s.execute(move || {
                     thread_task(
                         i,
                         t,
@@ -59,7 +65,7 @@ pub fn beta_coocurring_amm(
             })
             .collect();
 
-        let _ = handles.into_iter().map(|h| h.join());
+        s.join();  // not sure if this joins all the thread..
     });
 
     let (bx, by) = matrices

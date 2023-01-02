@@ -7,6 +7,7 @@ default-run = "gamm"
 [dependencies]
 nalgebra = "0.31.3"
 num-traits = "0.2.15"
+scoped-pool = "1.0.0"
 serde = { version="1.0.147", features=["derive"] }
 toml = "0.5.9"
 
