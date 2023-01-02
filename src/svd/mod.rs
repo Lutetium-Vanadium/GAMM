@@ -10,6 +10,9 @@ use std::{
 use na::RawStorage;
 use nalgebra as na;
 
+extern crate scoped_pool;
+use scoped_pool::Pool;
+
 use crate::common::Float;
 use rotation::JacobiRotation;
 
@@ -239,7 +242,10 @@ where
             sort_locks: &sort_locks,
         };
 
-        std::thread::scope(move |s| {
+        // create a pool of t threads
+        let pool = Pool::new(t);
+
+        pool.scoped(|s|{
             let handles: Vec<_> = (0..t)
                 .map(|i| {
                     let cloned = worker_args.clone();
@@ -259,11 +265,11 @@ where
                     //   function
                     // - `worker_id` is unique to all currently running `jts_group_worker`s and `t`
                     //   is the number of workers
-                    s.spawn(move || unsafe { jts_parallel_worker(i, t, cloned) })
+                    s.execute(move || unsafe { jts_parallel_worker(i, t, cloned) })
                 })
                 .collect();
 
-            let _ = handles.into_iter().map(|h| h.join());
+            s.join();
         });
 
         if cfg!(feature = "print-iter") {
