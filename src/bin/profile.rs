@@ -1,11 +1,12 @@
+use gamm::config::Bin;
 fn main() {
     let config = gamm::get_config();
     let (x, y) = gamm::load_matrices(&config).expect("Couldn't load matrices");
 
-    let (name, f) = match config.bin.as_deref() {
-        Some("intra") => ("intra", gamm::intra::beta_coocurring_amm as gamm::AmmFn),
-        Some("inter") => ("inter", gamm::inter::beta_coocurring_amm as gamm::AmmFn),
-        _ => panic!("Invalid amm ({:?}) set to be profiled", config.bin),
+    let (name, f) = match config.bin.expect("No amm set to be profiled") {
+        Bin::Intra => ("intra", gamm::intra::beta_coocurring_amm as gamm::AmmFn),
+        Bin::Inter => ("inter", gamm::inter::beta_coocurring_amm as gamm::AmmFn),
+        Bin::Single => ("single", gamm::single::beta_coocurring_amm as gamm::AmmFn),
     };
 
     let mut energy_meter =

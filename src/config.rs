@@ -7,6 +7,14 @@ use serde::Deserialize;
 
 use crate::common;
 
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Bin {
+    Single,
+    Intra,
+    Inter,
+}
+
 #[derive(Deserialize, Debug)]
 pub struct Config {
     #[serde(default = "defaults::x")]
@@ -19,7 +27,7 @@ pub struct Config {
     pub beta: common::Float,
     #[serde(default = "common::hardware_concurrency")]
     pub t: usize,
-    pub bin: Option<String>,
+    pub bin: Option<Bin>,
 }
 
 impl Default for Config {
