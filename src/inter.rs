@@ -2,17 +2,14 @@ use std::sync::{Barrier, Mutex};
 
 use nalgebra as na;
 
-use crate::{
-    common::{self, Float, ZeroedColumns},
-    config, svd,
-};
+use crate::{bamm, common::Float, config, svd};
 
 pub fn beta_coocurring_amm(
     x: &na::DMatrix<Float>,
     y: &na::DMatrix<Float>,
     config: &config::Config,
 ) -> na::DMatrix<Float> {
-    let config::Config { l, beta, t, .. } = *config;
+    let config::Config { l, t, .. } = *config;
 
     let (m1, d1) = x.shape();
     let (m2, d2) = y.shape();
@@ -26,9 +23,7 @@ pub fn beta_coocurring_amm(
     let sub_col_size_base = d / t;
     let extra = d % t;
 
-    let attenuate_vec =
-        na::DVector::from_iterator(l, (0..l).map(|i| attenuate(beta, i as Float, l as Float)));
-
+    let bamm_config = bamm::BAmmConfig::from(config);
     let barrier = Barrier::new(t);
     let matrices: Vec<_> = (0..t)
         .map(|_| Mutex::new((na::DMatrix::zeros(m1, l), na::DMatrix::zeros(m2, l))))
@@ -39,7 +34,7 @@ pub fn beta_coocurring_amm(
             .map(|i| {
                 let barrier_ref = &barrier;
                 let matrices_ref = matrices.as_ref();
-                let attenuate_vec = attenuate_vec.column(0);
+                let bamm_config_ref = &bamm_config;
 
                 let (start_i, ncols) = if i < extra {
                     (i * (sub_col_size_base + 1), sub_col_size_base + 1)
@@ -58,8 +53,7 @@ pub fn beta_coocurring_amm(
                         y_slice,
                         barrier_ref,
                         matrices_ref,
-                        attenuate_vec,
-                        l,
+                        bamm_config_ref,
                     )
                 })
             })
@@ -105,10 +99,9 @@ fn thread_task(
     y: na::DMatrixSlice<Float>,
     barrier: &Barrier,
     matrices: &[Mutex<(na::DMatrix<Float>, na::DMatrix<Float>)>],
-    attenuate_vec: na::DVectorSlice<Float>,
-    l: usize,
+    bamm_config: &bamm::BAmmConfig,
 ) {
-    let d = x.ncols();
+    let l = bamm_config.l;
 
     // The maximum number of times this thread needs to run. Each parallel iteration of
     // beta_coocurring_reduction requires half the threads* of the previous iteration.
@@ -154,124 +147,10 @@ fn thread_task(
         let (x, y) = other_matrices
             .as_ref()
             .map(|m| (m.0.columns(0, l), m.1.columns(0, l)))
-            .unwrap_or_else(|| (x.columns(l, d - l), y.columns(l, d - l)));
+            .unwrap_or_else(|| (x.columns_range(l..), y.columns_range(l..)));
 
-        beta_coocurring_reduction(
-            x,
-            y,
-            attenuate_vec,
-            l,
-            bx.columns_mut(0, l),
-            by.columns_mut(0, l),
-        );
+        bamm::beta_coocurring_reduction(x, y, bx, by, &svd::SeqJTSConfig::default(), bamm_config);
     }
 
     drop(own_matrices);
-}
-
-/// First `l` columns must already be inserted into `bx` and `by`. `x` and `y` should not include
-/// the first `l` columns
-///
-/// Shape of matrices:
-/// - x: (m1, d-l)
-/// - y: (m2, d-l)
-/// - bx: (m1, l)
-/// - by: (m2, l)
-fn beta_coocurring_reduction(
-    x: na::DMatrixSlice<Float>,
-    y: na::DMatrixSlice<Float>,
-    attenuate_vec: na::DVectorSlice<Float>,
-    l: usize,
-    mut bx: na::DMatrixSliceMut<Float>,
-    mut by: na::DMatrixSliceMut<Float>,
-) {
-    // Need to make sure there aren't already zero columns
-    let mut zeroed_cols = ZeroedColumns::new_from_matrix(&bx);
-    assert_eq!(x.ncols(), y.ncols());
-
-    let mut ry_t = na::DMatrix::zeros(l, l);
-
-    let x_iter = x
-        .column_iter()
-        .enumerate()
-        .filter(|(_, c)| !c.iter().copied().all(common::is_zero));
-    let y_iter = y
-        .column_iter()
-        .enumerate()
-        .filter(|(_, c)| !c.iter().copied().all(common::is_zero));
-
-    // First l columns have already been copied, so we start from i=l instead
-    for ((x_i, x_col), (y_i, y_col)) in x_iter.zip(y_iter) {
-        assert_eq!(x_i, y_i);
-        // In the paper's algorithm, the column insertion happens before this check as there will
-        // always be non-zero rows to copy into since the previous iteration would create space if
-        // needed. Since we copy the first l rows beforehand, the space making must be done before
-        // subsequent copies
-        if zeroed_cols.nzeroed() == 0 {
-            let mut rx = na::DMatrix::zeros(l, l);
-
-            let qx = {
-                // TODO: try avoiding this allocation + copy?
-                let res = common::qr(bx.clone_owned(), rx, false);
-                rx = res.1;
-                res.0
-            };
-            let qy = {
-                // TODO: try avoiding this allocation + copy?
-                let res = common::qr(by.clone_owned(), ry_t, true);
-                ry_t = res.1;
-                res.0
-            };
-
-            // TODO: try avoiding this allocation?
-            rx *= &ry_t;
-
-            let svd::Svd {
-                mut u,
-                mut v,
-                mut sv,
-            } = svd::Svd::jts_seq(rx, svd::TOL, svd::TAU, svd::MAX_SWEEPS);
-
-            parameterized_reduce_rank(&mut sv, attenuate_vec);
-
-            for i in 0..sv.len() {
-                if common::is_zero(sv[i]) {
-                    zeroed_cols.set_zeroed(i);
-                }
-                u.column_mut(i).scale_mut(sv[i]);
-                v.column_mut(i).scale_mut(sv[i]);
-            }
-
-            qx.mul_to(&u, &mut bx);
-            qy.mul_to(&v, &mut by);
-        }
-
-        // Just make sure that the zero column book-keeping is indeed valid - only run in debug mode
-        if cfg!(debug_assertions) {
-            zeroed_cols.check_matching_zeroed(&bx);
-            zeroed_cols.check_matching_zeroed(&by);
-        }
-
-        let zero_col = zeroed_cols.get_next_zeroed();
-        bx.set_column(zero_col, &x_col);
-        by.set_column(zero_col, &y_col);
-    }
-}
-
-fn parameterized_reduce_rank(
-    sv: &mut na::OVector<
-        <Float as na::ComplexField>::RealField,
-        na::DimMinimum<na::Dynamic, na::Dynamic>,
-    >,
-    attenuate_vec: na::DVectorSlice<Float>,
-) {
-    let delta = sv[0];
-
-    sv.axpy(-delta, &attenuate_vec, 1.0);
-    // TODO vectorize this?
-    sv.apply(|v| *v = v.max(0.0).sqrt());
-}
-
-fn attenuate(beta: Float, k: Float, l: Float) -> Float {
-    (beta * k / (l - 1.0)).exp_m1() / beta.exp_m1()
 }

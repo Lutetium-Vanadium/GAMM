@@ -1,5 +1,6 @@
 #![feature(slice_take, io_error_other)]
 
+pub mod bamm;
 pub mod common;
 pub mod config;
 pub mod energy_meter;

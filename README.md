@@ -42,6 +42,11 @@ If running the `gamm` binary, `--bin gamm` is not required.
 
 ## Environment Variables
 
+If the `HARDWARE_CONCURRENCY` environment variable is set to some
+number, that is used as the default hardware concurrency. If the
+configuration file _does not_ specify a value for `t`, then
+`HARDWARE_CONCURRENCY` will be used.
+
 When running the `gamm` binary, if the `MEASURE_LOOP_MM` environment
 variable is set, then it will also measure the time taken to perform
 full matrix multiplication using a handwritten unoptimized loop.
@@ -62,6 +67,8 @@ beta = 28.0
 t = <detected hardware concurrency>
 bin = <not set by default>
 ```
+
+The available options for bin are `intra`, `inter` and `single`.
 
 The configuration must be in a `.toml` file and can be passed as the
 last argument when running a binary.
@@ -87,20 +94,27 @@ Within the `gamm` library the following modules are present:
 - `common` -- this contains helper functions used throughout the
   code base.
 
+- `config` -- this contains the code required for loading the
+  configuration file.
+
 - `energy_meter` -- this contains the implementation of the energy
   meter. Currently only the `JetsonEnergyMeter` is available.
-
+ 
 - `svd` -- this contains the implementation of JTS. There are three
   implementations present:
   - Sequential JTS
   - Simple parallel JTS
   - Group parallel JTS
 
+- `bamm` -- this contains the implementation of the reduction part of
+  BCooccurring-AMM. It is used by `inter`, `intra` and `single` to
+  implement the different types of parallelism in the AMM.
+ 
 - `inter`/`intra`/`single` -- these contain the approximate matrix
   multiplication implementations for inter-parallelism,
   intra-parallelism and no parallelism respectively. These use the JTS
   based implementation.
 
-- `libsvd` -- this contains two submodules (`single` and `multi`) which
-  contain single-threaded and mutli-threaded approximate matrix
+- `libsvd` -- this contains two sub-modules (`single` and `multi`) which
+  contain single-threaded and multi-threaded approximate matrix
   multiplication implementation using the `nalgebra` SVD implementation.

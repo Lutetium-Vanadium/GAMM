@@ -13,6 +13,7 @@ use nalgebra as na;
 use crate::common::Float;
 use rotation::JacobiRotation;
 
+mod calculator;
 mod rotation;
 mod worker_phase1;
 #[cfg(feature = "group")]
@@ -26,14 +27,16 @@ use worker_phases_group::{jts_group_worker_phase_2, jts_group_worker_phase_3};
 #[cfg(not(feature = "group"))]
 use worker_phases_simple_par::{jts_group_worker_phase_2, jts_group_worker_phase_3};
 
+pub use calculator::*;
+
 pub const TAU: usize = 32;
 pub const MAX_SWEEPS: usize = 100;
 pub const TOL: Float = 1e-7;
 
 pub struct Svd<D: na::Dim>
 where
-    na::DefaultAllocator: na::allocator::Allocator<Float, D, D>,
-    na::DefaultAllocator: na::allocator::Allocator<Float, D>,
+    na::DefaultAllocator:
+        na::allocator::Allocator<Float, D, D> + na::allocator::Allocator<Float, D>,
 {
     pub u: na::OMatrix<Float, D, D>,
     pub sv: na::OVector<Float, D>,
@@ -42,10 +45,10 @@ where
 
 impl<D: na::Dim> Svd<D>
 where
-    na::DefaultAllocator: na::allocator::Allocator<Float, D, D>,
-    na::DefaultAllocator: na::allocator::Allocator<Float, D>,
-    na::DefaultAllocator: na::allocator::Allocator<(Float, usize), D>,
-    na::DefaultAllocator: na::allocator::Allocator<(usize, usize), D>,
+    na::DefaultAllocator: na::allocator::Allocator<Float, D, D>
+        + na::allocator::Allocator<Float, D>
+        + na::allocator::Allocator<(Float, usize), D>
+        + na::allocator::Allocator<(usize, usize), D>,
 {
     fn sorted_sv(mut self) -> Self {
         const VALUE_PROCESSED: usize = usize::MAX;
