@@ -10,7 +10,6 @@ use std::{
 use na::RawStorage;
 use nalgebra as na;
 
-extern crate scoped_pool;
 use scoped_pool::Pool;
 
 use crate::common::Float;
@@ -186,8 +185,9 @@ where
         tol: Float,
         tau: usize,
         max_sweeps: usize,
-        t: usize,
+        pool: &Pool,
     ) -> Self {
+        let t = pool.workers();
         let delta = tol * matrix.norm_squared();
         if cfg!(feature = "print-iter") {
             print!("DELTA: {}", delta);
@@ -243,8 +243,6 @@ where
         };
 
         // create a pool of t threads
-        let pool = Pool::new(t);
-
         pool.scoped(|s|{
             let handles: Vec<_> = (0..t)
                 .map(|i| {

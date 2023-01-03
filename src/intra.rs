@@ -1,6 +1,7 @@
 use nalgebra as na;
 
 use crate::{bamm, common::Float, config, svd};
+use scoped_pool::Pool;
 
 pub fn beta_coocurring_amm(
     x: &na::DMatrix<Float>,
@@ -16,12 +17,14 @@ pub fn beta_coocurring_amm(
     let mut bx = na::DMatrix::from(x.columns(0, l));
     let mut by = na::DMatrix::from(y.columns(0, l));
 
+    let pool = Pool::new(config.t);
+
     bamm::beta_coocurring_reduction(
         x.columns_range(l..),
         y.columns_range(l..),
         &mut bx,
         &mut by,
-        &svd::ParJTSConfig::new(config.t),
+        &svd::ParJTSConfig::new(&pool),
         &config.into(),
     );
 

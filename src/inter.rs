@@ -2,7 +2,6 @@ use std::sync::{Barrier, Mutex};
 
 use nalgebra as na;
 
-extern crate scoped_pool;
 use scoped_pool::Pool;
 
 use crate::{bamm, common::Float, config, svd};
