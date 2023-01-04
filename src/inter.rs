@@ -35,34 +35,32 @@ pub fn beta_coocurring_amm(
     let pool = Pool::new(t);
 
     pool.scoped(|s| {
-        let _handles: Vec<_> = (0..t)
-            .map(|i| {
-                let barrier_ref = &barrier;
-                let matrices_ref = matrices.as_ref();
-                let bamm_config_ref = &bamm_config;
+        for i in 0..t {
+            let barrier_ref = &barrier;
+            let matrices_ref = matrices.as_ref();
+            let bamm_config_ref = &bamm_config;
 
-                let (start_i, ncols) = if i < extra {
-                    (i * (sub_col_size_base + 1), sub_col_size_base + 1)
-                } else {
-                    (i * sub_col_size_base + extra, sub_col_size_base)
-                };
+            let (start_i, ncols) = if i < extra {
+                (i * (sub_col_size_base + 1), sub_col_size_base + 1)
+            } else {
+                (i * sub_col_size_base + extra, sub_col_size_base)
+            };
 
-                let x_slice = x.columns(start_i, ncols);
-                let y_slice = y.columns(start_i, ncols);
+            let x_slice = x.columns(start_i, ncols);
+            let y_slice = y.columns(start_i, ncols);
 
-                s.execute(move || {
-                    thread_task(
-                        i,
-                        t,
-                        x_slice,
-                        y_slice,
-                        barrier_ref,
-                        matrices_ref,
-                        bamm_config_ref,
-                    )
-                })
+            s.execute(move || {
+                thread_task(
+                    i,
+                    t,
+                    x_slice,
+                    y_slice,
+                    barrier_ref,
+                    matrices_ref,
+                    bamm_config_ref,
+                )
             })
-            .collect();
+        }
     });
 
     let (bx, by) = matrices
