@@ -244,28 +244,26 @@ where
 
         // create a pool of t threads
         pool.scoped(|s| {
-            let _handles: Vec<_> = (0..t)
-                .map(|i| {
-                    let cloned = worker_args.clone();
-                    // SAFETY
-                    //
-                    // - `npivots <= n choose 2`
-                    // - `b` points to a valid writeable `n*n` matrix buffer
-                    // - `v` points to a valid writeable `n*n` matrix buffer
-                    // - `p1` points to a valid writeable `n choose 2` `Vec` buffer
-                    // - `p2` points to a valid writeable `n choose 2` `Vec` buffer
-                    // - `p` points to either p1 or p2, based on log2(t.next_power_of_two()) % 2
-                    // - `q` points to a valid writeable `npivots` `Vec` buffer
-                    // - `shape = (n, n)`
-                    // - `barrier` is not waited on by any other threads, only threads running this
-                    //   function
-                    // - `counter` is not wrote to by any other threads, only threads running this
-                    //   function
-                    // - `worker_id` is unique to all currently running `jts_group_worker`s and `t`
-                    //   is the number of workers
-                    s.execute(move || unsafe { jts_parallel_worker(i, t, cloned) })
-                })
-                .collect();
+            for i in 0..t {
+                let cloned = worker_args.clone();
+                // SAFETY
+                //
+                // - `npivots <= n choose 2`
+                // - `b` points to a valid writeable `n*n` matrix buffer
+                // - `v` points to a valid writeable `n*n` matrix buffer
+                // - `p1` points to a valid writeable `n choose 2` `Vec` buffer
+                // - `p2` points to a valid writeable `n choose 2` `Vec` buffer
+                // - `p` points to either p1 or p2, based on log2(t.next_power_of_two()) % 2
+                // - `q` points to a valid writeable `npivots` `Vec` buffer
+                // - `shape = (n, n)`
+                // - `barrier` is not waited on by any other threads, only threads running this
+                //   function
+                // - `counter` is not wrote to by any other threads, only threads running this
+                //   function
+                // - `worker_id` is unique to all currently running `jts_group_worker`s and `t`
+                //   is the number of workers
+                s.execute(move || unsafe { jts_parallel_worker(i, t, cloned) })
+            }
         });
 
         if cfg!(feature = "print-iter") {
