@@ -35,7 +35,7 @@ pub fn beta_coocurring_amm(
     let pool = Pool::new(t);
 
     pool.scoped(|s| {
-        let handles: Vec<_> = (0..t)
+        let _handles: Vec<_> = (0..t)
             .map(|i| {
                 let barrier_ref = &barrier;
                 let matrices_ref = matrices.as_ref();
@@ -63,8 +63,6 @@ pub fn beta_coocurring_amm(
                 })
             })
             .collect();
-
-        s.join();  // not sure if this joins all the thread..
     });
 
     let (bx, by) = matrices

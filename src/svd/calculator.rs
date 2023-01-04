@@ -42,7 +42,7 @@ impl SVDCalculator for SeqJTSConfig {
     }
 }
 
-pub struct ParJTSConfig <'a> {
+pub struct ParJTSConfig<'a> {
     pub tol: Float,
     pub tau: usize,
     pub max_sweeps: usize,
