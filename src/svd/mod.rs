@@ -243,8 +243,8 @@ where
         };
 
         // create a pool of t threads
-        pool.scoped(|s|{
-            let handles: Vec<_> = (0..t)
+        pool.scoped(|s| {
+            let _handles: Vec<_> = (0..t)
                 .map(|i| {
                     let cloned = worker_args.clone();
                     // SAFETY
@@ -266,8 +266,6 @@ where
                     s.execute(move || unsafe { jts_parallel_worker(i, t, cloned) })
                 })
                 .collect();
-
-            s.join();
         });
 
         if cfg!(feature = "print-iter") {
