@@ -7,7 +7,7 @@ use crate::{
 
 pub struct BAmmConfig {
     pub l: usize,
-    pub attenuate_vec: na::DVector<Float>,
+    attenuate_vec: na::DVector<Float>,
 }
 
 impl From<&config::Config> for BAmmConfig {
@@ -17,17 +17,20 @@ impl From<&config::Config> for BAmmConfig {
             l,
             attenuate_vec: na::DVector::from_iterator(
                 config.l,
-                (0..l)
-                    .map(|i| (beta * (i as Float) / ((l as Float) - 1.0)).exp_m1() / beta.exp_m1()),
+                (0..l).map(|i| attenuate(beta, i as Float, l as Float)),
             ),
         }
     }
 }
 
-pub fn parameterized_reduce_rank(sv: &mut na::DVector<Float>, attenuate_vec: &na::DVector<Float>) {
+fn attenuate(beta: Float, k: Float, l: Float) -> Float {
+    (k * beta / (l - 1.0)).exp_m1() / beta.exp_m1()
+}
+
+fn parameterized_reduce_rank(sv: &mut na::DVector<Float>, attenuate_vec: &na::DVector<Float>) {
     let delta = sv[0];
 
-    sv.axpy(-delta, &attenuate_vec, 1.0);
+    sv.axpy(-delta, attenuate_vec, 1.0);
     sv.apply(|v| *v = v.max(0.0).sqrt());
 }
 
@@ -46,7 +49,7 @@ pub fn beta_coocurring_reduction<S: svd::SVDCalculator>(
     debug_assert_eq!(d1, d2);
     debug_assert!(config.l <= d1);
 
-    let mut zeroed_cols = ZeroedColumns::new_from_matrix(&bx);
+    let mut zeroed_cols = ZeroedColumns::new_from_matrix(bx);
     assert_eq!(x.ncols(), y.ncols());
 
     // Get an iterator over the non-zero columns of X and Y
@@ -73,11 +76,11 @@ pub fn beta_coocurring_reduction<S: svd::SVDCalculator>(
     }
 }
 
-pub fn beta_coocurring_reduction_step<'a, S: svd::SVDCalculator>(
+fn beta_coocurring_reduction_step<'a, S: svd::SVDCalculator>(
     x_iter: &mut impl Iterator<Item = (usize, na::DVectorSlice<'a, Float>)>,
     y_iter: &mut impl Iterator<Item = (usize, na::DVectorSlice<'a, Float>)>,
-    mut bx: &mut na::DMatrix<Float>,
-    mut by: &mut na::DMatrix<Float>,
+    bx: &mut na::DMatrix<Float>,
+    by: &mut na::DMatrix<Float>,
     zeroed_cols: &mut ZeroedColumns,
     svd_executor: &S,
     config: &BAmmConfig,
@@ -85,8 +88,8 @@ pub fn beta_coocurring_reduction_step<'a, S: svd::SVDCalculator>(
     // Just make sure that the zero column book-keeping is indeed valid.
     // This does not run in release mode
     if cfg!(debug_assertions) {
-        zeroed_cols.check_matching_zeroed(&bx);
-        zeroed_cols.check_matching_zeroed(&by);
+        zeroed_cols.check_matching_zeroed(bx);
+        zeroed_cols.check_matching_zeroed(by);
     }
 
     // No space, perform rank reduction
@@ -117,8 +120,8 @@ pub fn beta_coocurring_reduction_step<'a, S: svd::SVDCalculator>(
             v.column_mut(i).scale_mut(sv[i]);
         }
 
-        qx.mul_to(&u, &mut bx);
-        qy.mul_to(&v, &mut by);
+        qx.mul_to(&u, bx);
+        qy.mul_to(&v, by);
     }
 
     // Fill Bx and By with columns from X and Y

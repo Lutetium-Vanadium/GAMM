@@ -74,14 +74,14 @@ impl ZeroedColumns {
             assert_eq!(
                 c.iter().copied().all(is_zero),
                 self.next_zeroed[i] != Self::NON_ZERO,
-                "column {}",
-                i
+                "column {i}",
             );
         }
     }
 }
 
 #[inline(always)]
+#[allow(clippy::type_complexity)]
 pub fn qr<R: na::Dim, C: na::Dim, SA, SB>(
     mut q: na::Matrix<Float, R, C, SA>,
     mut r: na::Matrix<Float, C, C, SB>,

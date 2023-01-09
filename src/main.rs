@@ -31,9 +31,9 @@ fn loop_mm(
     res
 }
 
-const SINGLE: (&'static str, gamm::AmmFn) = ("self svd single", gamm::single::beta_coocurring_amm);
-const INTRA: (&'static str, gamm::AmmFn) = ("intra-parallelism", gamm::intra::beta_coocurring_amm);
-const INTER: (&'static str, gamm::AmmFn) = ("inter-parallelism", gamm::inter::beta_coocurring_amm);
+const SINGLE: (&str, gamm::AmmFn) = ("self svd single", gamm::single::beta_coocurring_amm);
+const INTRA: (&str, gamm::AmmFn) = ("intra-parallelism", gamm::intra::beta_coocurring_amm);
+const INTER: (&str, gamm::AmmFn) = ("inter-parallelism", gamm::inter::beta_coocurring_amm);
 
 fn main() {
     let config = gamm::get_config();
@@ -75,7 +75,7 @@ fn run_functions(mut functions: Vec<(&str, gamm::AmmFn)>, config: config::Config
     let (err_baseline_name, err_baseline_f) = functions.pop().unwrap();
     let (z_expected, time) = gamm::measure_time(|| err_baseline_f(&x, &y, &config));
 
-    println!("(baseline) {} -- {:?}", err_baseline_name, time);
+    println!("(baseline) {err_baseline_name} -- {time:?}");
 
     // Try to use the energy meter. If there is an error in creating the energy meter, then the
     // energy meter will not be supported
@@ -117,11 +117,10 @@ fn run_functions(mut functions: Vec<(&str, gamm::AmmFn)>, config: config::Config
             energy_readings_path.push(name);
             energy_readings_path.set_extension("csv");
 
-            eprintln!("Writing energy readings to {:?}", energy_readings_path);
+            eprintln!("Writing energy readings to {energy_readings_path:?}");
 
             if let Err(e) = energy_readings.write_csv(&energy_readings_path) {
-                eprintln!("WARNING: Failed to write detailed energy readings:");
-                eprintln!("{}", e);
+                eprintln!("WARNING: Failed to write detailed energy readings:\n{e}");
             }
 
             // Remember to remove the filename added earlier, as the energy_readings_dir is
@@ -143,7 +142,7 @@ fn run_functions(mut functions: Vec<(&str, gamm::AmmFn)>, config: config::Config
             print!("Energy - {:>8.4}J;  ", energy_readings.energy_consumed());
         }
 
-        println!("Error - {:.4}", err);
+        println!("Error - {err:.4}");
     }
 }
 

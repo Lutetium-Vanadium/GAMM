@@ -78,6 +78,7 @@ pub fn beta_coocurring_amm(
     bx * by.transpose()
 }
 
+#[allow(clippy::too_many_arguments)]
 /// # Execution
 ///
 /// For example, take t = 4, the theoretical tree will look something like this:

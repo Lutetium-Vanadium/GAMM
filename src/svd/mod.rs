@@ -112,7 +112,7 @@ where
     ) -> Self {
         let delta = tol * matrix.norm_squared();
         if cfg!(feature = "print-iter") {
-            print!("DELTA: {}", delta);
+            print!("DELTA: {delta}");
         }
 
         let (n_generic, m_generic) = matrix.shape_generic();
@@ -148,7 +148,7 @@ where
 
             if p[0].2 < delta {
                 if cfg!(feature = "print-iter") {
-                    println!("\t{} iterations", i);
+                    println!("\t{i} iterations");
                 }
                 break;
             }
@@ -190,7 +190,7 @@ where
         let t = pool.workers();
         let delta = tol * matrix.norm_squared();
         if cfg!(feature = "print-iter") {
-            print!("DELTA: {}", delta);
+            print!("DELTA: {delta}");
         }
 
         let (n_generic, m_generic) = matrix.shape_generic();

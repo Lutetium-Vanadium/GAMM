@@ -10,6 +10,16 @@ use std::{
     thread, time,
 };
 
+/// The energy meter was asked to start sampling while already sampling.
+#[derive(Debug, Default)]
+pub struct AlreadySampling;
+
+impl From<()> for AlreadySampling {
+    fn from(_: ()) -> Self {
+        Self
+    }
+}
+
 #[derive(Default)]
 pub struct EnergyReadings {
     /// All current readings in mA
@@ -21,9 +31,10 @@ pub struct EnergyReadings {
 
 impl EnergyReadings {
     pub fn new(sample_interval: time::Duration) -> Self {
-        let mut this = Self::default();
-        this.sample_interval = sample_interval;
-        this
+        Self {
+            sample_interval,
+            ..Self::default()
+        }
     }
 
     /// Return the cumulative energy consumed in the sampling period. If the energy meter is in use,
@@ -59,8 +70,7 @@ impl EnergyReadings {
 
             writeln!(
                 file,
-                "{}, {}, {}, {}, {}",
-                time, voltage, current, power, cumulative_energy
+                "{time}, {voltage}, {current}, {power}, {cumulative_energy}"
             )?;
         }
 
@@ -163,7 +173,7 @@ impl JetsonEnergyMeter {
 
     /// Starts a new thread which collects the energy consumption. Returns an `Err` if energy meter
     /// is already collecting.
-    pub fn start_sampling(&mut self) -> Result<(), ()> {
+    pub fn start_sampling(&mut self) -> Result<(), AlreadySampling> {
         let mut config = self.inner.take_config().ok_or(())?;
 
         let should_stop = Arc::clone(&self.should_stop);

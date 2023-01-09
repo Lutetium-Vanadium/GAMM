@@ -47,7 +47,7 @@ fn get_config_inner() -> Option<config::Config> {
 
 pub fn get_config() -> config::Config {
     let config = get_config_inner().unwrap_or_default();
-    println!("{:?}", config);
+    println!("{config:?}");
     config
 }
 
