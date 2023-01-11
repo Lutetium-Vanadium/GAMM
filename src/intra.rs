@@ -24,7 +24,7 @@ pub fn beta_coocurring_amm(
         y.columns_range(l..),
         &mut bx,
         &mut by,
-        &svd::ParJTSConfig::new(&pool),
+        &svd::ParJTSConfig::new(&pool, config.t),
         &config.into(),
     );
 

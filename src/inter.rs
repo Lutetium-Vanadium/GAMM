@@ -26,38 +26,39 @@ pub fn beta_coocurring_amm(
         return na::DMatrix::zeros(m1, m2);
     }
 
-    let bamm_config = bamm::BAmmConfig::from(config);
-    let barrier = Barrier::new(t);
+    let bamm_config = &bamm::BAmmConfig::from(config);
+    let barrier = &Barrier::new(t);
+
     let matrices: Vec<_> = (0..t)
         .map(|_| Mutex::new((na::DMatrix::zeros(m1, l), na::DMatrix::zeros(m2, l))))
         .collect();
 
-    // create a pool of t threads
-    let pool = Pool::new(t);
+    // Create a new pool which has one less thread than parallelism wanted. One less thread is
+    // spawned as the current thread acts as if it is part of the pool and does part of the
+    // execution.
+    let pool = Pool::new(t - 1);
 
     pool.scoped(|s| {
-        for i in 0..t {
-            let barrier_ref = &barrier;
-            let matrices_ref = matrices.as_ref();
-            let bamm_config_ref = &bamm_config;
+        let matrices_ref = matrices.as_ref();
 
+        // Spawn t-1 tasks on other threads
+        for i in 1..t {
             let (start_col_i, ncols) = common::uneven_divide(i, d, t);
 
             let x_slice = x.columns(start_col_i, ncols);
             let y_slice = y.columns(start_col_i, ncols);
 
             s.execute(move || {
-                thread_task(
-                    i,
-                    t,
-                    x_slice,
-                    y_slice,
-                    barrier_ref,
-                    matrices_ref,
-                    bamm_config_ref,
-                )
-            })
+                thread_task(i, t, x_slice, y_slice, barrier, matrices_ref, bamm_config);
+            });
         }
+
+        let ncols = common::uneven_divide(0, d, t).1;
+        let x_slice = x.columns(0, ncols);
+        let y_slice = y.columns(0, ncols);
+
+        // ...and execute one task on this thread itself
+        thread_task(0, t, x_slice, y_slice, barrier, matrices_ref, bamm_config);
     });
 
     let (bx, by) = matrices
@@ -115,7 +116,7 @@ fn thread_task(
         .try_lock()
         .expect("couldn't lock own threads matrix");
 
-    let (ref mut bx, ref mut by) = *own_matrices;
+    let (bx, by) = &mut *own_matrices;
 
     // Make sure every thread gets first access to its assigned matrices. If the thread execution
     // was very imbalanced, it could be that a thread completes its first run and then takes the

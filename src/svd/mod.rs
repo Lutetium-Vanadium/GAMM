@@ -9,7 +9,6 @@ use std::{
 
 use na::RawStorage;
 use nalgebra as na;
-
 use scoped_pool::Pool;
 
 use crate::common::Float;
@@ -186,8 +185,8 @@ where
         tau: usize,
         max_sweeps: usize,
         pool: &Pool,
+        t: usize,
     ) -> Self {
-        let t = pool.workers();
         let delta = tol * matrix.norm_squared();
         if cfg!(feature = "print-iter") {
             print!("DELTA: {delta}");
@@ -244,26 +243,30 @@ where
 
         // create a pool of t threads
         pool.scoped(|s| {
-            for i in 0..t {
+            // SAFETY (for the unsafe in this closure - jts_parallel_worker calls)
+            //
+            // - `npivots <= n choose 2`
+            // - `b` points to a valid writeable `n*n` matrix buffer
+            // - `v` points to a valid writeable `n*n` matrix buffer
+            // - `p1` points to a valid writeable `n choose 2` `Vec` buffer
+            // - `p2` points to a valid writeable `n choose 2` `Vec` buffer
+            // - `p` points to either p1 or p2, based on log2(t.next_power_of_two()) % 2
+            // - `q` points to a valid writeable `npivots` `Vec` buffer
+            // - `shape = (n, n)`
+            // - `barrier` is not waited on by any other threads, only threads running this
+            //   function
+            // - `counter` is not wrote to by any other threads, only threads running this
+            //   function
+            // - `worker_id` is unique to all currently running `jts_group_worker`s and `t`
+            //   is the number of workers
+
+            // Spawn t-1 tasks on other threads
+            for i in 1..t {
                 let cloned = worker_args.clone();
-                // SAFETY
-                //
-                // - `npivots <= n choose 2`
-                // - `b` points to a valid writeable `n*n` matrix buffer
-                // - `v` points to a valid writeable `n*n` matrix buffer
-                // - `p1` points to a valid writeable `n choose 2` `Vec` buffer
-                // - `p2` points to a valid writeable `n choose 2` `Vec` buffer
-                // - `p` points to either p1 or p2, based on log2(t.next_power_of_two()) % 2
-                // - `q` points to a valid writeable `npivots` `Vec` buffer
-                // - `shape = (n, n)`
-                // - `barrier` is not waited on by any other threads, only threads running this
-                //   function
-                // - `counter` is not wrote to by any other threads, only threads running this
-                //   function
-                // - `worker_id` is unique to all currently running `jts_group_worker`s and `t`
-                //   is the number of workers
                 s.execute(move || unsafe { jts_parallel_worker(i, t, cloned) })
             }
+            // ...and execute one task on this thread itself
+            unsafe { jts_parallel_worker(0, t, worker_args) }
         });
 
         if cfg!(feature = "print-iter") {
@@ -315,6 +318,7 @@ const MAIN_WORKER: usize = 0;
 const COMPLETED: usize = usize::MAX;
 
 fn assert_copy<T: Copy>() {}
+
 /// # Safety
 ///
 /// The caller must guarantee the following:

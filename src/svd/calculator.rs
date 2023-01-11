@@ -47,20 +47,22 @@ pub struct ParJTSConfig<'a> {
     pub tau: usize,
     pub max_sweeps: usize,
     pub pool: &'a Pool,
+    pub t: usize,
 }
 
 impl<'a> ParJTSConfig<'a> {
-    pub fn new(pool: &'a Pool) -> Self {
+    pub fn new(pool: &'a Pool, t: usize) -> Self {
         Self {
             tol: super::TOL,
             tau: super::TAU,
             max_sweeps: super::MAX_SWEEPS,
             pool,
+            t,
         }
     }
 
-    pub fn with_pool(mut self, pool: &'a Pool) -> Self {
-        self.pool = pool;
+    pub fn with_t(&mut self, t: usize) -> &Self {
+        self.t = t;
         self
     }
 }
@@ -74,6 +76,17 @@ impl<'a> SVDCalculator for ParJTSConfig<'a> {
             + na::allocator::Allocator<(Float, usize), D>
             + na::allocator::Allocator<(usize, usize), D>,
     {
-        super::Svd::jts_par(matrix, self.tol, self.tau, self.max_sweeps, self.pool)
+        if self.t == 1 {
+            super::Svd::jts_seq(matrix, self.tol, self.tau, self.max_sweeps)
+        } else {
+            super::Svd::jts_par(
+                matrix,
+                self.tol,
+                self.tau,
+                self.max_sweeps,
+                self.pool,
+                self.t,
+            )
+        }
     }
 }
