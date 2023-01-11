@@ -43,6 +43,10 @@ If the `MEASURE_LOOP_MM` environment variable is set, then it will also
 measure the time taken to perform full matrix multiplication using a
 handwritten unoptimized loop.
 
+If the `GAMM_BIN` environment variable is set, then it will be the
+default binary to run. If the configuration file _does not_ specify a
+value for `bin`, then `GAMM_BIN` will be used.
+
 If the `ENERGY_READINGS_DIR` environment variable is set, then the
 detailed energy readings taken by the energy meter will be written to
 the directory specified by it. Each file will be located at
@@ -68,11 +72,12 @@ beta = 28.0
 # The number of threads to use -- integer > 0
 t = "<detected hardware concurrency>"
 
-# The AMM function to run when running the program -- intra/inter/single
-bin = "<not set by default>"
+# The AMM function to run when running the program
+bin = "all"
 ```
 
-The available options for bin are `intra`, `inter` and `single`.
+The available options for bin are `intra`, `inter`, `single`,
+`parallel` and `all`.
 
 The configuration must be in a `.toml` file and can be passed as the
 last argument when running a binary.

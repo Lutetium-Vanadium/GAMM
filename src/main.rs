@@ -40,10 +40,11 @@ fn main() {
 
     // All the ways to calculate the multiplication of x*y^T:
     let mut functions = match config.bin {
-        Some(config::Bin::Single) => vec![SINGLE],
-        Some(config::Bin::Intra) => vec![INTRA],
-        Some(config::Bin::Inter) => vec![INTER],
-        None => vec![
+        config::Bin::Single => vec![SINGLE],
+        config::Bin::Intra => vec![INTRA],
+        config::Bin::Inter => vec![INTER],
+        config::Bin::Parallel => vec![INTRA, INTER],
+        config::Bin::All => vec![
             (
                 "lib svd single",
                 gamm::libsvd::single::beta_coocurring_amm as gamm::AmmFn,

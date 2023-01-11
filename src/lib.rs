@@ -1,4 +1,4 @@
-#![feature(slice_take, io_error_other)]
+#![feature(slice_take, io_error_other, result_option_inspect)]
 
 pub mod bamm;
 pub mod common;
@@ -38,11 +38,11 @@ fn get_config_inner() -> Option<config::Config> {
         return None;
     }
 
-    config::Config::from_file(path::Path::new(
-        &args.next_back().expect("Checked len above"),
-    ))
-    .ok()
-    .flatten()
+    let config_file = args.next_back().expect("Checked len above");
+    config::Config::from_file(path::Path::new(&config_file))
+        .inspect_err(|e| eprintln!("Couldn't parse {config_file:?}: {e}"))
+        .ok()
+        .flatten()
 }
 
 pub fn get_config() -> config::Config {

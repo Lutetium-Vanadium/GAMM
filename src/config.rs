@@ -8,11 +8,13 @@ use serde::Deserialize;
 use crate::common;
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum Bin {
     Single,
     Intra,
     Inter,
+    Parallel,
+    All,
 }
 
 #[derive(Deserialize, Debug)]
@@ -27,7 +29,8 @@ pub struct Config {
     pub beta: common::Float,
     #[serde(default = "common::hardware_concurrency")]
     pub t: usize,
-    pub bin: Option<Bin>,
+    #[serde(default = "defaults::bin")]
+    pub bin: Bin,
 }
 
 impl Default for Config {
@@ -38,7 +41,7 @@ impl Default for Config {
             l: defaults::l(),
             beta: defaults::beta(),
             t: common::hardware_concurrency(),
-            bin: None,
+            bin: defaults::bin(),
         }
     }
 }
@@ -68,5 +71,19 @@ mod defaults {
 
     pub(super) fn beta() -> Float {
         28.0
+    }
+
+    pub(super) fn bin() -> super::Bin {
+        std::env::var("GAMM_BIN")
+            // It is unfortunate, but to use serde to deserialize the GAMM_BIN from the
+            // environment, variable, we need to wrap it in quotes
+            .map(|mut s| {
+                s.insert(0, '"');
+                s.push('"');
+                toml::from_str::<super::Bin>(&s).ok()
+            })
+            .ok()
+            .flatten()
+            .unwrap_or(super::Bin::All)
     }
 }
