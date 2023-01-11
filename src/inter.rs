@@ -4,7 +4,11 @@ use nalgebra as na;
 
 use scoped_pool::Pool;
 
-use crate::{bamm, common::Float, config, svd};
+use crate::{
+    bamm,
+    common::{self, Float},
+    config, svd,
+};
 
 pub fn beta_coocurring_amm(
     x: &na::DMatrix<Float>,
@@ -22,9 +26,6 @@ pub fn beta_coocurring_amm(
         return na::DMatrix::zeros(m1, m2);
     }
 
-    let sub_col_size_base = d / t;
-    let extra = d % t;
-
     let bamm_config = bamm::BAmmConfig::from(config);
     let barrier = Barrier::new(t);
     let matrices: Vec<_> = (0..t)
@@ -40,14 +41,10 @@ pub fn beta_coocurring_amm(
             let matrices_ref = matrices.as_ref();
             let bamm_config_ref = &bamm_config;
 
-            let (start_i, ncols) = if i < extra {
-                (i * (sub_col_size_base + 1), sub_col_size_base + 1)
-            } else {
-                (i * sub_col_size_base + extra, sub_col_size_base)
-            };
+            let (start_col_i, ncols) = common::uneven_divide(i, d, t);
 
-            let x_slice = x.columns(start_i, ncols);
-            let y_slice = y.columns(start_i, ncols);
+            let x_slice = x.columns(start_col_i, ncols);
+            let y_slice = y.columns(start_col_i, ncols);
 
             s.execute(move || {
                 thread_task(

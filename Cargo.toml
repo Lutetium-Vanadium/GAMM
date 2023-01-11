@@ -8,18 +8,18 @@ default-run = "gamm"
 nalgebra = "0.31.3"
 num-traits = "0.2.15"
 scoped-pool = "1.0.0"
-serde = { version="1.0.147", features=["derive"] }
+serde = { version = "1.0.147", features = ["derive"] }
 toml = "0.5.9"
 
 [features]
 # Enabling this feauture prevents inlining of a few functions to provide better profiling output
-profile=[]
+profile = []
 # Enabling this feauture uses "group" parallelism of JTS in inter-parallelism. If not enabled,
 # simple-parallelism will be used instead
-group=[]
+group = []
 # Enabling this feature prints the number of iterations taken to perform the SVD for JTS (both
 # sequential and parallel)
-print-iter=[]
+print-iter = []
 
 [profile.release]
 debug = true

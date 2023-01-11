@@ -151,3 +151,16 @@ pub fn close_to(a: Float, b: Float) -> bool {
 pub fn is_zero(a: Float) -> bool {
     close_to(a, 0.0)
 }
+
+/// Divides something of size `m` into `n` batches and returns the `(start, length)` for the batch
+/// `i`
+pub fn uneven_divide(i: usize, m: usize, n: usize) -> (usize, usize) {
+    let base = m / n;
+    let extra = m % n;
+
+    if i < extra {
+        (i * (base + 1), base + 1)
+    } else {
+        (i * base + extra, base)
+    }
+}

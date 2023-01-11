@@ -3,7 +3,7 @@ use std::cmp;
 use nalgebra as na;
 
 use super::WorkerArgs;
-use crate::common::Float;
+use crate::common::{self, Float};
 
 #[cfg_attr(feature = "profile", inline(never))]
 #[cfg_attr(not(feature = "profile"), inline(always))]
@@ -21,7 +21,14 @@ pub(super) unsafe fn jts_group_worker_phase_1<D: na::Dim>(
 
     // The start index of the part of p to be written to by this thread, and the number of elements
     // to write
-    let (start_i, nelements) = p_subarray_for_worker(n, t, worker_id);
+    let total_nouter_iters = n / 2;
+    let ninner_iters = n + (n % 2) - 1;
+
+    let (outer_iter_start_i, nouter_iters) =
+        common::uneven_divide(worker_id, total_nouter_iters, t);
+
+    let start_i = outer_iter_start_i * ninner_iters;
+    let nelements = nouter_iters * ninner_iters;
 
     // ------------ PHASE 1.1 ------------
     // Generate all the possible column pairs (in parallel). Then sort each subset of column-pairs
@@ -150,20 +157,5 @@ unsafe fn merge<T: Copy + std::fmt::Debug, F: FnMut(&T, &T) -> cmp::Ordering>(
         to.add(i).write(b[b_i]);
         b_i += 1;
         i += 1;
-    }
-}
-
-/// returns (start_i, nelements)
-fn p_subarray_for_worker(n: usize, t: usize, worker_id: usize) -> (usize, usize) {
-    let nouter_iters = n / 2;
-    let ninner_iters = n + (n % 2) - 1;
-
-    let extra_iters = nouter_iters % t;
-    let base = (nouter_iters / t) * ninner_iters;
-
-    if worker_id < extra_iters {
-        (worker_id * (base + ninner_iters), base + ninner_iters)
-    } else {
-        (worker_id * base + extra_iters * ninner_iters, base)
     }
 }
